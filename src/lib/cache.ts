@@ -129,3 +129,10 @@ export async function cached<T>(
  * cutting DB wakes by orders of magnitude under real traffic.
  */
 export const HOME_TTL_SECONDS = 3600;
+
+/**
+ * Deals go stale faster than prices — a listing can sell at any moment — but
+ * the underlying listing data only refreshes hourly, so there's nothing to gain
+ * from a shorter window than this and plenty of Neon compute to lose.
+ */
+export const DEALS_TTL_SECONDS = 900;

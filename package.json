@@ -17,6 +17,7 @@
     "snapshot": "tsx scripts/snapshot.ts",
     "ingest": "tsx scripts/ingest.ts",
     "ingest:sales": "tsx scripts/ingest-sales.ts",
+    "ingest:listings": "tsx scripts/ingest-listings.ts",
     "backfill": "tsx scripts/backfill-prices.ts",
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",

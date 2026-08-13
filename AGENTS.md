@@ -40,6 +40,24 @@ pair, stored in `ProductPrice`:
   already *separate products*, so they need no extra axis there; for eBay's free
   text, `parsePrinting()` recovers them.
 
+⚠️ **Rare and above only exist as Foil.** Riftbound prints every Rare, Epic and
+Showcase card foil, so TCGplayer lists them under `subTypeName = "Foil"` with **no
+Normal row at all** (verified across OGN/SFD/UNL/VEN: zero Normal price rows for
+those rarities, a full set of Foil ones). Only Common and Uncommon have both
+finishes. So reading the Normal price of a Rare returns **null, not a cheaper
+number** — a bug that silently zeroes out most of a set's value, and the reason
+`getBoxEvPageData()` joins both finishes and picks per rarity.
+
+⚠️ **Classify printings from the TCGplayer name, not the Riftcodex flags.** The
+`isAlternateArt` / `isSignature` / `isOvernumbered` columns lag each new set by
+weeks (same cause as the `tcgplayer_id` lag below) and are wrong in ways that
+wreck an average: on 2026-08-13 *every* Signature card had `isOvernumbered = false`
+despite being numbered `306*/298`, and Vendetta had 43 Showcase cards with no flags
+set at all. The `"(Signature)"` / `"(Overnumbered)"` / `"(Alternate Art)"` suffix
+TCGplayer writes into the product name partitions all four booster sets exactly,
+with zero leftovers, and works the day a set is listed. `classifyPrinting()` in
+`src/lib/box-ev.ts` is the one implementation — reuse it.
+
 `Product.salePrice` is a denormalised convenience holding the **most-traded**
 bucket only, named by `Product.salePriceVariant`. The UI must always show that
 label — a bare number implies it covers every printing, which it does not.
@@ -87,6 +105,50 @@ to GitHub runners — verified, unlike Riftcodex.
 
 Run `npm run ingest:sales -- --reprice-only` to re-apply the pricing rules to
 already-stored sales without re-polling.
+
+# Deals tracker — comparing like with like
+
+`/deals` lists active listings priced ≥20% under what a card actually sells for.
+Everything about it is a like-for-like comparison; each filter exists because
+skipping it produced a wrong answer in practice (`src/lib/deals.ts`):
+
+⚠️ **`listingType: "custom"` is the single most important filter.** TCGplayer
+lets sellers attach custom listings — their own title, description and photos —
+to any product page, and those need not be the same item. On
+"Spiritforged - Booster Display" (benchmark **$187**) a dozen custom listings sat
+at **$35–95**, titled `CHINESE - Spiritforged Booster Box - SLIM` (24 packs × 5
+cards) and `CHINESE … JUMBO` (12 packs × 14 cards): a different print run *and* a
+different box configuration. They render as 75%-off "deals" and are nothing of
+the sort. Filtering to `standard` removed 1,184 listings and dropped the board
+from 200 entries to 66 real ones.
+
+> **The `language` field cannot catch this.** All 7,021 listings collected
+> reported `language: "English"`, Chinese boxes included. Do not reach for it —
+> the discriminator is structural, and it also excludes bundles, re-boxed product
+> and lots, not just foreign printings.
+
+The rest:
+
+- **Near Mint only**, as an allow-list rather than a "not Damaged" block-list.
+  Every tier below NM is cheaper *because it is worse*; against an NM benchmark
+  they all read as permanent bargains.
+- **Benchmark matched on finish.** Normal against Normal, Foil against Foil —
+  they diverge by up to 18×, so a cross-finish comparison invents huge fake
+  discounts.
+- **Shipping must not exceed the saving.** A penny common at 71% off "saves"
+  $0.37 and costs $1.49 to post. This removes cheap-card noise without an
+  arbitrary price floor.
+- **≥75% off is flagged, not hidden** (`SUSPICIOUS_DISCOUNT`) and sorted into its
+  own section. Credible and flagged deals are fetched as *separate queries* —
+  sorting flagged last and truncating hid them entirely once there were enough
+  real deals to fill the page.
+
+Watch list: Epic/Showcase rarity, or worth over $1 — 633 of 1,534 products.
+Polled hourly by `listings.yml` at :05, staggered off sales (:35) and the daily
+price ingest (21:15) so the jobs never contend on the same Neon compute.
+
+Listings are **replaced** each run, not accumulated — the opposite of `Sale`. A
+listing that sold must vanish rather than linger as a phantom deal.
 
 # Data sources — the important part
 

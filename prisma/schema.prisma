@@ -107,6 +107,7 @@ model Product {
   prices        PriceSnapshot[]
   sales         Sale[]
   variantPrices ProductPrice[]
+  listings      Listing[]
 
   @@index([groupId])
   @@index([isSealed])
@@ -214,6 +215,51 @@ model ProductPrice {
 
   @@id([productId, finish, gradeKey])
   @@index([price])
+}
+
+/// An active TCGplayer listing — someone's current ask.
+///
+/// Ephemeral by nature: listings sell and get relisted constantly, so each poll
+/// REPLACES a product's rows rather than accumulating them. This is the opposite
+/// of `Sale`, which is an immutable historical record we deliberately build up.
+/// Storing listing history would be a much larger table describing a market that
+/// no longer exists.
+///
+/// Only the cheap end of each product is kept — a deal lives there by
+/// definition, and one common had 880 live listings.
+model Listing {
+  /// TCGplayer's own listing id.
+  listingId BigInt @id
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [productId], onDelete: Cascade)
+
+  /// "Normal" | "Foil" — must match the finish of the price it's compared to.
+  finish        String
+  condition     String
+  language      String
+  price         Float
+  shippingPrice Float
+  quantity      Int
+
+  /// "standard" | "custom". Only `standard` listings are guaranteed to BE the
+  /// catalogue product — sellers use custom listings to sell physically
+  /// different items (Chinese slim/jumbo boxes) under the same product page.
+  /// Custom listings are filtered out at ingest; the column is kept so the
+  /// decision is auditable rather than invisible.
+  listingType  String  @default("standard")
+  customTitle  String?
+
+  sellerName   String?
+  sellerRating Float?
+  sellerSales  String?
+  directSeller Boolean @default(false)
+
+  seenAt DateTime @default(now())
+
+  /// Serves the deals query: cheapest comparable listing per product+finish.
+  @@index([productId, finish, price])
+  @@index([seenAt])
 }
 
 /// One row per completed ingest — so the site can show "last updated" and so a
