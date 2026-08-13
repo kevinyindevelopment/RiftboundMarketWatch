@@ -25,6 +25,57 @@ export type PricedProduct = {
   tcgplayerUrl: string;
 };
 
+/** A product ranked by its best available price, with the source made explicit. */
+export type ValuedProduct = {
+  productId: number;
+  name: string;
+  setName: string;
+  rarity: string | null;
+  tcgplayerUrl: string;
+  /** The number shown. From sales when we have enough recent ones, else market. */
+  price: number;
+  /** "sales" = median of recent completed sales; "market" = TCGplayer's figure. */
+  source: "sales" | "market";
+  sampleSize: number | null;
+  lastSaleAt: Date | null;
+};
+
+/**
+ * Most valuable products by *effective* price.
+ *
+ * Ranks on the sales-derived price where one exists and TCGplayer's market price
+ * otherwise, in a single SQL pass — ordering in JS would mean pulling every
+ * product to sort it. `source` is returned so the UI never presents a fallback
+ * market price as though it were sales-derived.
+ */
+export async function getTopByValue(
+  opts: { limit?: number; sealed?: boolean } = {},
+): Promise<ValuedProduct[]> {
+  const { limit = 20, sealed = false } = opts;
+
+  return prisma.$queryRaw<ValuedProduct[]>`
+    SELECT p."productId",
+           p.name,
+           s.name AS "setName",
+           p.rarity,
+           p."tcgplayerUrl",
+           COALESCE(p."salePrice", ps."marketPrice")::float8 AS price,
+           CASE WHEN p."salePrice" IS NOT NULL THEN 'sales' ELSE 'market' END AS source,
+           p."saleSampleSize" AS "sampleSize",
+           p."saleLastAt" AS "lastSaleAt"
+    FROM "Product" p
+    JOIN "CardSet" s ON s."groupId" = p."groupId"
+    LEFT JOIN "PriceSnapshot" ps
+      ON ps."productId" = p."productId"
+     AND ps.date = (SELECT MAX(date) FROM "PriceSnapshot")
+     AND ps."subTypeName" = 'Normal'
+    WHERE p."isSealed" = ${sealed}
+      AND COALESCE(p."salePrice", ps."marketPrice") IS NOT NULL
+    ORDER BY COALESCE(p."salePrice", ps."marketPrice") DESC
+    LIMIT ${limit}
+  `;
+}
+
 /** Highest market price on the latest day. `sealed` filters singles vs sealed. */
 export async function getTopByMarketPrice(
   opts: { limit?: number; sealed?: boolean } = {},
@@ -151,21 +202,48 @@ export async function getSummary() {
  * hit but stay a Date on a miss. Normalising here keeps both paths identical.
  */
 export async function getHomeData() {
-  return cached("home:v1", HOME_TTL_SECONDS, async () => {
-    const [summary, topSingles, topSealed, movers] = await Promise.all([
+  // Key bumped to v2: the payload now carries sales-derived prices, so entries
+  // written by the previous shape must not be deserialised into this one.
+  return cached("home:v2", HOME_TTL_SECONDS, async () => {
+    const [summary, topSingles, topSealed, movers, salesStats] = await Promise.all([
       getSummary(),
-      getTopByMarketPrice({ limit: 20, sealed: false }),
-      getTopByMarketPrice({ limit: 10, sealed: true }),
+      getTopByValue({ limit: 20, sealed: false }),
+      getTopByValue({ limit: 10, sealed: true }),
       getTopMovers({ limit: 20 }),
+      getSalesCoverage(),
     ]);
     return {
       summary: {
         ...summary,
         latest: summary.latest ? summary.latest.toISOString().slice(0, 10) : null,
       },
-      topSingles,
-      topSealed,
+      salesStats,
+      // Dates are normalised to ISO strings before caching — see cache.ts.
+      topSingles: topSingles.map((p) => ({
+        ...p,
+        lastSaleAt: p.lastSaleAt ? new Date(p.lastSaleAt).toISOString() : null,
+      })),
+      topSealed: topSealed.map((p) => ({
+        ...p,
+        lastSaleAt: p.lastSaleAt ? new Date(p.lastSaleAt).toISOString() : null,
+      })),
       movers,
     };
   });
+}
+
+/** How much of the catalogue is priced from real sales rather than fallback. */
+export async function getSalesCoverage() {
+  const [sales, priced, total, newest] = await Promise.all([
+    prisma.sale.count(),
+    prisma.product.count({ where: { salePrice: { not: null } } }),
+    prisma.product.count(),
+    prisma.sale.findFirst({ orderBy: { orderDate: "desc" }, select: { orderDate: true } }),
+  ]);
+  return {
+    sales,
+    priced,
+    total,
+    newestSaleAt: newest?.orderDate ? newest.orderDate.toISOString() : null,
+  };
 }

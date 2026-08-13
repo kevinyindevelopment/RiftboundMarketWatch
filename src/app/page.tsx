@@ -1,4 +1,4 @@
-import { getHomeData, getTopByMarketPrice } from "@/lib/queries";
+import { getHomeData } from "@/lib/queries";
 
 // Still dynamic per request — but the DATA behind it is edge-cached for an hour
 // (see src/lib/cache.ts), so a request is cheap React rendering rather than five
@@ -34,7 +34,7 @@ export default async function Home() {
     );
   }
 
-  const { summary, topSingles, topSealed, movers } = data;
+  const { summary, topSingles, topSealed, movers, salesStats } = data;
 
   return (
     <main className="space-y-12">
@@ -45,6 +45,14 @@ export default async function Home() {
           across {summary.sets} sets · {summary.days} day
           {summary.days === 1 ? "" : "s"} of price history
           {summary.latest ? ` · latest ${summary.latest}` : ""}
+        </p>
+        <p className="mt-1 text-sm text-zinc-500">
+          Prices are the median of the last 10 completed TCGplayer sales (Near
+          Mint), refreshed hourly ·{" "}
+          <strong className="text-zinc-400">
+            {salesStats.priced.toLocaleString()}/{salesStats.total.toLocaleString()}
+          </strong>{" "}
+          priced from {salesStats.sales.toLocaleString()} recorded sales
         </p>
       </header>
 
@@ -118,11 +126,19 @@ function Section({
   );
 }
 
-function PriceTable({
-  rows,
-}: {
-  rows: Awaited<ReturnType<typeof getTopByMarketPrice>>;
-}) {
+type ValuedRow = {
+  productId: number;
+  name: string;
+  setName: string;
+  rarity: string | null;
+  tcgplayerUrl: string;
+  price: number;
+  source: "sales" | "market";
+  sampleSize: number | null;
+  lastSaleAt: string | null;
+};
+
+function PriceTable({ rows }: { rows: ValuedRow[] }) {
   if (rows.length === 0) return <p className="text-zinc-500">No price data yet.</p>;
   return (
     <table className="w-full text-sm">
@@ -131,21 +147,34 @@ function PriceTable({
           <th className="py-2">Name</th>
           <th>Set</th>
           <th>Rarity</th>
-          <th className="text-right">Market</th>
+          <th className="text-right">Price</th>
+          <th className="text-right">Based on</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr key={`${r.productId}-${r.subTypeName}`} className="border-t border-zinc-800">
+          <tr key={r.productId} className="border-t border-zinc-800">
             <td className="py-2">
               <a href={r.tcgplayerUrl} className="hover:underline" target="_blank" rel="noreferrer">
                 {r.name}
               </a>
-              <span className="ml-2 text-xs text-zinc-500">{r.subTypeName}</span>
             </td>
             <td className="text-zinc-400">{r.setName}</td>
             <td className="text-zinc-400">{r.rarity ?? "—"}</td>
-            <td className="text-right">{money(r.marketPrice)}</td>
+            <td className="text-right">{money(r.price)}</td>
+            <td className="text-right text-xs">
+              {/* Never let a fallback market price look like a sales-derived one:
+                  the whole value of this site is knowing which you're reading. */}
+              {r.source === "sales" ? (
+                <span className="text-emerald-400">
+                  {r.sampleSize} sale{r.sampleSize === 1 ? "" : "s"}
+                </span>
+              ) : (
+                <span className="text-zinc-500" title="Too few recent sales — showing TCGplayer market price">
+                  market est.
+                </span>
+              )}
+            </td>
           </tr>
         ))}
       </tbody>

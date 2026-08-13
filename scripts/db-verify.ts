@@ -79,6 +79,64 @@ async function main() {
     );
   }
 
+  // --- Sales-derived pricing ------------------------------------------------
+  const [saleCount, salePriced, saleDates] = await Promise.all([
+    prisma.sale.count(),
+    prisma.product.count({ where: { salePrice: { not: null } } }),
+    prisma.sale.aggregate({ _min: { orderDate: true }, _max: { orderDate: true } }),
+  ]);
+  console.log("\n=== SALES (headline price source) ===");
+  console.log(`sales stored     ${saleCount}`);
+  console.log(`products priced  ${salePriced} of ${products}`);
+  if (saleDates._min.orderDate) {
+    console.log(
+      `sale date range  ${saleDates._min.orderDate.toISOString().slice(0, 16)} → ` +
+        `${saleDates._max.orderDate?.toISOString().slice(0, 16)}`,
+    );
+  }
+
+  // Sample size matters: depth accumulates over time, so early on most products
+  // sit below the 10-sale target. This is the number that shows it filling in.
+  const buckets = await prisma.$queryRaw<{ bucket: string; n: bigint }[]>`
+    SELECT CASE
+             WHEN "saleSampleSize" >= 10 THEN 'full (10)'
+             WHEN "saleSampleSize" >= 5  THEN '5-9'
+             WHEN "saleSampleSize" >= 1  THEN '1-4'
+             ELSE 'none'
+           END AS bucket,
+           COUNT(*)::bigint AS n
+    FROM "Product" GROUP BY 1 ORDER BY 1
+  `;
+  console.log("sample depth:");
+  for (const b of buckets) console.log(`  ${b.bucket.padEnd(10)} ${Number(b.n)}`);
+
+  // Sanity: how far does the sales price sit from TCGplayer's own marketPrice?
+  // Big divergence isn't necessarily wrong (that's the point of using sales),
+  // but a systematic 10x gap would mean a unit or condition bug.
+  const compare = await prisma.$queryRaw<
+    { name: string; sale: number; market: number; ratio: number }[]
+  >`
+    SELECT p.name,
+           p."salePrice" AS sale,
+           ps."marketPrice" AS market,
+           ROUND((p."salePrice" / NULLIF(ps."marketPrice", 0))::numeric, 2)::float8 AS ratio
+    FROM "Product" p
+    JOIN "PriceSnapshot" ps
+      ON ps."productId" = p."productId"
+     AND ps.date = (SELECT MAX(date) FROM "PriceSnapshot")
+     AND ps."subTypeName" = 'Normal'
+    WHERE p."salePrice" IS NOT NULL AND ps."marketPrice" > 1
+    ORDER BY ABS(LOG(GREATEST(p."salePrice" / NULLIF(ps."marketPrice", 0), 0.01))) DESC
+    LIMIT 6
+  `;
+  console.log("\nlargest sale-vs-market divergences (Normal printing):");
+  for (const c of compare) {
+    console.log(
+      `  ${c.name.slice(0, 42).padEnd(44)} sale $${String(c.sale).padStart(8)}` +
+        `  market $${String(c.market).padStart(8)}  ${c.ratio}x`,
+    );
+  }
+
   const runs = await prisma.ingestRun.findMany({ orderBy: { id: "desc" }, take: 5 });
   console.log("\n=== RECENT INGEST RUNS ===");
   for (const r of runs) {

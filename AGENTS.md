@@ -19,6 +19,57 @@ served under a sub-path of **kevin-yin.com**.
 - Ratings app: `/riftelo` (separate repo/Worker — don't touch its route)
 - The domain root is reserved for other content.
 
+# Pricing — the point of the project
+
+**The headline price is the median of the last 10 completed TCGplayer sales
+(Near Mint), refreshed hourly.** Not tcgcsv's `marketPrice`, which is
+TCGplayer's own smoothed algorithm over sales — a step further from the truth and
+a day stale. `marketPrice` is kept as a *fallback* and for history.
+
+`src/lib/sale-price.ts` owns the rules. All of them come from real observed data,
+so don't "simplify" them without new evidence:
+
+- **Median, not mean.** One Near Mint copy sold at $1,099 the same day three
+  others went for $850. A mean reports a price nothing sold at.
+- **Near Mint only** (plus `Unopened`, which is sealed product's equivalent).
+  Lightly Played copies of the same card traded ~27% below Near Mint; blending
+  conditions describes a card nobody can buy. Every sale is still *stored*
+  regardless of condition — the filter only governs the headline number.
+- **≥ 3 sales required** (`MIN_SAMPLE_SIZE`). With n=1 the median *is* that one
+  sale: 18 products were priced off a single sale, one landing 5.8× above market.
+- **≤ 30 days old** (`MAX_SALE_AGE_DAYS`). A Metal Irelia was reporting $1,300
+  from one sale 2.5 months earlier as its current price.
+
+When a product fails those guards it gets **no** sales price and the UI falls
+back to `marketPrice`, labelled `market est.` — never presented as sales-derived.
+Currently ~1,434/1,534 are sales-priced; the rest are mostly signature/prize/metal
+cards that genuinely trade rarely. **Pricing those better is a known open problem
+— eBay sold-listings are the intended answer. Don't attempt it with TCGplayer
+data.**
+
+## The 5-sale ceiling (why the poller is hourly)
+
+TCGplayer returns only the **5 most recent sales** per product. `limit` and
+`offset` are both accepted and both **ignored** — paging at offset 0/5/10/15
+returns the identical rows. Depth is therefore *accumulated*: poll hourly, store
+what's new, compute from our own history.
+
+The consequence: **a card selling more than 5 times within one polling interval
+loses the oldest of those sales permanently.** That is the reason the job runs
+hourly rather than daily. Don't lengthen the interval.
+
+Sale identity is a hash of `(productId, orderDate, price, shipping, quantity,
+condition, variant)` — the feed carries no sale id, and `customListingId` is the
+*listing*, which recurs. Shipping is in the key because two genuine sales were
+seen at the same second with the same price and quantity, differing only there.
+
+⚠️ **A non-browser `User-Agent` gets `403` from TCGplayer's WAF.** Unlike the
+tcgcsv archive (any UA works), this endpoint wants a browser one. It *is* served
+to GitHub runners — verified, unlike Riftcodex.
+
+Run `npm run ingest:sales -- --reprice-only` to re-apply the pricing rules to
+already-stored sales without re-polling.
+
 # Data sources — the important part
 
 Two upstreams, joined into one table. Neither needs an API key.

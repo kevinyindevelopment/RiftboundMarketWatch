@@ -32,7 +32,12 @@ TOTAL            20.3 MB
 ```
 
 `Product` barely grows (a new set adds ~300 rows a few times a year).
-`PriceSnapshot` is the only real growth: ~1,700–2,000 rows every day, forever.
+`PriceSnapshot` grows ~1,700–2,000 rows every day, forever.
+
+`Sale` is the newer growth source: ~7,300 rows landed on the first full sweep,
+and hourly polling adds only genuinely *new* sales after that (dedup by natural
+key), so the steady-state rate follows real market activity rather than the poll
+frequency. Re-check with `npm run db:verify`, which prints per-table sizes.
 
 So **a full year of price history costs about three cents a month**. Storage is
 not worth contorting the schema over — do not add delta-encoding, pruning, or
@@ -56,11 +61,17 @@ matters far more than row counts.
    (tcgcsv refreshes ~20:00 UTC). There is no reason for two visitors in the same
    hour to cause two sets of queries. Cache aggressively — the data is stale by
    design.
-2. **One scheduled write job, once a day.** `update.yml` runs at 21:15 UTC. Do
-   **not** shorten that interval "for freshness" — upstream is a once-daily
-   snapshot, so a more frequent job would rewrite identical numbers and wake
-   compute for nothing. (Contrast RiftboundElo, which polls every 3h because
-   tournament results genuinely land throughout the day.)
+2. **Two scheduled write jobs, and their intervals are deliberate.**
+   - `update.yml` (daily, 21:15 UTC) — tcgcsv products + prices. Do **not**
+     shorten it: upstream is a once-daily snapshot, so a more frequent job would
+     rewrite identical numbers and wake compute for nothing.
+   - `sales.yml` (hourly, :35) — TCGplayer sales. Hourly is **required**, not a
+     preference: only the 5 most recent sales are exposed, so a longer gap
+     permanently loses sales for any card that trades more than 5 times in it.
+     Measured cost: ~2 min/run wall clock (61s of it polling 1,534 products),
+     ≈ 1,440 GitHub Actions minutes/month — inside the 2,000-minute free tier for
+     private repos, but with little headroom. Adding a *third* hourly job, or
+     slowing this one down, would push it into paid overage.
 3. **Batch writes; never loop single queries over the network.** The ingest sends
    ~16 concurrent upserts and bulk `createMany` for prices. A naive per-row
    sequential loop would hold compute open far longer for the same work.

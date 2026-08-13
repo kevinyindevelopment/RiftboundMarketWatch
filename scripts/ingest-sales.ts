@@ -14,7 +14,7 @@
 import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
 import { fetchLatestSales, saleId, type TcgSale } from "../src/lib/tcgplayer-sales";
-import { computeSalePrice } from "../src/lib/sale-price";
+import { computeSalePrice, MAX_SALE_AGE_DAYS } from "../src/lib/sale-price";
 
 /**
  * Parallel requests to TCGplayer.
@@ -51,6 +51,10 @@ async function main() {
 
   const limit = arg("--limit") ? Number(arg("--limit")) : undefined;
   const minPrice = arg("--min-price") ? Number(arg("--min-price")) : undefined;
+  // Recompute prices from sales already stored, without touching TCGplayer.
+  // For changing the pricing rules and seeing the effect immediately, instead of
+  // waiting an hour and re-polling 1,500 products to learn the same thing.
+  const repriceOnly = process.argv.includes("--reprice-only");
 
   const products = await prisma.product.findMany({
     select: { productId: true, name: true },
@@ -74,8 +78,10 @@ async function main() {
   }
 
   console.log(
-    `Polling ${targets.length} product(s) at concurrency ${CONCURRENCY}` +
-      (minPrice !== undefined ? ` (min market price $${minPrice})` : ""),
+    repriceOnly
+      ? `Repricing ${targets.length} product(s) from stored sales (no polling)`
+      : `Polling ${targets.length} product(s) at concurrency ${CONCURRENCY}` +
+          (minPrice !== undefined ? ` (min market price $${minPrice})` : ""),
   );
 
   const started = Date.now();
@@ -100,7 +106,7 @@ async function main() {
   let failed = 0;
   let noSales = 0;
 
-  for (const batch of chunk(targets, CONCURRENCY)) {
+  for (const batch of repriceOnly ? [] : chunk(targets, CONCURRENCY)) {
     await Promise.all(
       batch.map(async (p) => {
         try {
@@ -170,13 +176,21 @@ async function main() {
   }
   console.log(`Stored ${inserted} new sale(s) (${unique.size - inserted} already known).`);
 
-  // --- Recompute the headline price for products that saw new sales ----------
-  const touched = [...new Set([...unique.values()].map((r) => r.productId))];
+  // --- Recompute the headline price ------------------------------------------
+  // Normally only products that saw new sales; on --reprice-only, everything,
+  // since the pricing rules themselves have changed.
+  const touched = repriceOnly
+    ? targets.map((t) => t.productId)
+    : [...new Set([...unique.values()].map((r) => r.productId))];
   let repriced = 0;
+
+  // Only sales inside the pricing window are ever relevant, and a product can
+  // accumulate hundreds over time — bound the read rather than pulling history.
+  const cutoff = new Date(Date.now() - MAX_SALE_AGE_DAYS * 86_400_000);
 
   for (const batch of chunk(touched, 50)) {
     const recent = await prisma.sale.findMany({
-      where: { productId: { in: batch } },
+      where: { productId: { in: batch }, orderDate: { gte: cutoff } },
       orderBy: { orderDate: "desc" },
       select: {
         productId: true,
@@ -196,7 +210,9 @@ async function main() {
     await Promise.all(
       [...byProduct.entries()].map(async ([productId, sales]) => {
         const result = computeSalePrice(sales);
-        if (result.price === null) return;
+        // Write the null too. A product that drops below the sample threshold
+        // must LOSE its price rather than keep the last good one forever —
+        // otherwise a stale figure outlives the evidence for it.
         await prisma.product.update({
           where: { productId },
           data: {
@@ -208,8 +224,27 @@ async function main() {
             salePriceAt: new Date(),
           },
         });
-        repriced++;
+        if (result.price !== null) repriced++;
       }),
+    );
+  }
+
+  // Expire prices for products that got NO new sales this run and whose last
+  // sale has now aged out. They never appear in `touched`, so without this sweep
+  // their price would persist indefinitely on evidence that no longer qualifies.
+  const expired = await prisma.product.updateMany({
+    where: { salePrice: { not: null }, saleLastAt: { lt: cutoff } },
+    data: {
+      salePrice: null,
+      salePriceLow: null,
+      salePriceHigh: null,
+      saleSampleSize: 0,
+      salePriceAt: new Date(),
+    },
+  });
+  if (expired.count > 0) {
+    console.log(
+      `Expired ${expired.count} price(s) with no sale in ${MAX_SALE_AGE_DAYS} days.`,
     );
   }
 
