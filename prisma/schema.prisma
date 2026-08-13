@@ -86,7 +86,19 @@ model Product {
   firstSeenAt DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  // --- Sales-derived current price (the headline number) ---
+  // Computed from the most recent Near Mint sales in `Sale` — see
+  // scripts/recompute-sale-prices.ts. Denormalised onto Product so listing pages
+  // sort and filter without aggregating millions of sale rows per request.
+  salePrice       Float?    // median of the last N qualifying sales
+  salePriceLow    Float?
+  salePriceHigh   Float?
+  saleSampleSize  Int?      // how many sales the median is over (< N early on)
+  saleLastAt      DateTime? // orderDate of the newest sale used
+  salePriceAt     DateTime? // when this was last recomputed
+
   prices PriceSnapshot[]
+  sales  Sale[]
 
   @@index([groupId])
   @@index([isSealed])
@@ -120,6 +132,44 @@ model PriceSnapshot {
   // Serves "price history for this product" (leading productId) and, separately,
   // "everything that moved on day X" for the movers board.
   @@index([date])
+}
+
+/// A single completed TCGplayer sale ("Latest Sales" on the product page).
+///
+/// WHY WE ACCUMULATE THESE. The upstream endpoint returns only the **5 most
+/// recent** sales per product — `limit` and `offset` are both ignored, so a
+/// deeper history cannot be fetched on demand. Polling hourly and storing what's
+/// new builds the depth ourselves: after a day, an active card has far more than
+/// the 10 sales the price is computed from.
+///
+/// Caveat that follows from that: a card selling more than 5 times within one
+/// polling interval will lose the oldest of those sales permanently. At the
+/// observed rate (a hot chase card managed 5 sales in ~5 hours) that's rare, but
+/// it is why the poller runs hourly rather than daily.
+model Sale {
+  /// Deterministic hash of the natural key. The feed carries no sale id
+  /// (`customListingId` is the listing, not the sale, and repeats), so identity
+  /// is the tuple below — that's what makes re-polling idempotent.
+  id String @id
+
+  productId Int
+  product   Product @relation(fields: [productId], references: [productId], onDelete: Cascade)
+
+  orderDate     DateTime
+  purchasePrice Float   // per unit, excluding shipping
+  shippingPrice Float
+  quantity      Int
+  condition     String  // "Near Mint" | "Lightly Played" | "Unopened" | ...
+  variant       String  // "Normal" | "Foil"
+  language      String?
+  title         String?
+
+  seenAt DateTime @default(now()) // when our poller first observed it
+
+  // Drives the price computation: newest-first within a product+printing, and
+  // the condition filter that keeps Lightly Played out of the headline number.
+  @@index([productId, variant, condition, orderDate])
+  @@index([orderDate])
 }
 
 /// One row per completed ingest — so the site can show "last updated" and so a
