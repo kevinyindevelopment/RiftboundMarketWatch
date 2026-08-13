@@ -1,7 +1,9 @@
-import { getSummary, getTopByMarketPrice, getTopMovers } from "@/lib/queries";
+import { getHomeData, getTopByMarketPrice } from "@/lib/queries";
 
-// Prices change daily and the DB is written out-of-band by the ingest job, so
-// there is nothing to prerender — always render against live Neon data.
+// Still dynamic per request — but the DATA behind it is edge-cached for an hour
+// (see src/lib/cache.ts), so a request is cheap React rendering rather than five
+// Neon queries. Rendering dynamically keeps deploys free of a build-time
+// database dependency; the cache is what protects the cost.
 export const dynamic = "force-dynamic";
 
 function money(n: number | null) {
@@ -14,13 +16,7 @@ export default async function Home() {
   // crash: show what's missing instead of a 500.
   let data;
   try {
-    const [summary, topSingles, topSealed, movers] = await Promise.all([
-      getSummary(),
-      getTopByMarketPrice({ limit: 20, sealed: false }),
-      getTopByMarketPrice({ limit: 10, sealed: true }),
-      getTopMovers({ limit: 20 }),
-    ]);
-    data = { summary, topSingles, topSealed, movers };
+    data = await getHomeData();
   } catch (err) {
     return (
       <main>
@@ -48,9 +44,7 @@ export default async function Home() {
           {summary.singles.toLocaleString()} cards and {summary.sealed} sealed products
           across {summary.sets} sets · {summary.days} day
           {summary.days === 1 ? "" : "s"} of price history
-          {summary.latest
-            ? ` · latest ${summary.latest.toISOString().slice(0, 10)}`
-            : ""}
+          {summary.latest ? ` · latest ${summary.latest}` : ""}
         </p>
       </header>
 

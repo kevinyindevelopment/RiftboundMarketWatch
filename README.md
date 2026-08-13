@@ -4,17 +4,23 @@ TCGplayer price tracking for every released Riftbound card. Sibling to
 [RiftboundElo](https://kevin-yin.com/riftelo); will be served at
 `kevin-yin.com/riftmarket`.
 
+**Live:** <https://kevin-yin.com/riftmarket>
+
 ## Data at a glance
 
-As of the first collection run (2026-08-13):
+As of 2026-08-13:
 
 | | |
 | --- | --- |
 | Sets | 10 |
 | Singles | 1,479 (1,431 with a live price) |
 | Sealed products | 55 |
-| Price rows | 1,993 (657 Normal + 1,336 Foil) |
+| Price history | **91 days** (2026-05-15 →), 154,820 snapshots |
+| Prices per day | ~1,993 (657 Normal + 1,336 Foil) |
 | Cards enriched with official art | 1,349 (91%) |
+| Database size | 20.3 MB (~$0.03/mo) |
+
+Re-check any of these with `npm run db:verify`.
 
 ## Quick start
 
@@ -51,6 +57,18 @@ tcgcsv archive (back to 2024-02-08) to seed the chart data.
 
 See [AGENTS.md](AGENTS.md) for the join logic, the sealed/single distinction, and
 the deployment constraints.
+
+## Development
+
+```bash
+npm test          # unit tests (node:test via tsx) — covers the join logic
+npm run db:verify # row counts, storage, recent ingest runs
+npm run neon:tune # apply the COST.md compute settings (dry-run by default)
+```
+
+Homepage data is edge-cached for an hour (`src/lib/cache.ts`). That's a **cost**
+measure, not a performance one — an uncached page view wakes Neon for the
+5-minute scale-to-zero window. See [COST.md](COST.md) before changing it.
 
 ## Stack
 

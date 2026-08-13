@@ -10,6 +10,18 @@
 		"directory": ".open-next/assets",
 		"binding": "ASSETS"
 	},
+	// Durable cache for the homepage query results. This is a COST control, not a
+	// speed one: an uncached render wakes Neon for the 5-minute scale-to-zero
+	// window (see COST.md). The Workers Cache API was tried first and measured
+	// unreliable — it evicted between requests and fell through to the database
+	// roughly half the time. KV is globally replicated and actually retains.
+	// Traffic here is ~24 writes/day and a handful of reads: far inside free tier.
+	"kv_namespaces": [
+		{
+			"binding": "RIFTMARKET_CACHE",
+			"id": "f8bb3b930c424ff98d35719ee71d2d75"
+		}
+	],
 	// Keep the free riftmarket.<subdomain>.workers.dev URL alive alongside the
 	// custom route — it's the runtime smoke-test target before DNS is wired.
 	"workers_dev": true,

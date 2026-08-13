@@ -2,6 +2,7 @@
 // so a partially-written day can never show as a 100% price crash.
 
 import { prisma } from "./prisma";
+import { cached, HOME_TTL_SECONDS } from "./cache";
 
 /** The most recent day that has any price data, or null on an empty DB. */
 export async function getLatestPriceDate(): Promise<Date | null> {
@@ -126,7 +127,7 @@ export async function getTopMovers(
 
 /** Headline counts for the homepage. */
 export async function getSummary() {
-  const [sets, singles, sealed, days, latest, lastRun] = await Promise.all([
+  const [sets, singles, sealed, days, latest] = await Promise.all([
     prisma.cardSet.count(),
     prisma.product.count({ where: { isSealed: false } }),
     prisma.product.count({ where: { isSealed: true } }),
@@ -134,7 +135,37 @@ export async function getSummary() {
       .findMany({ distinct: ["date"], select: { date: true } })
       .then((r) => r.length),
     getLatestPriceDate(),
-    prisma.ingestRun.findFirst({ where: { ok: true }, orderBy: { date: "desc" } }),
   ]);
-  return { sets, singles, sealed, days, latest, lastRun };
+  return { sets, singles, sealed, days, latest };
+}
+
+/**
+ * Everything the homepage needs, in ONE cached, JSON-safe payload.
+ *
+ * The cache is the point: without it every visitor runs these five queries and
+ * wakes Neon for the full 5-minute scale-to-zero window (see COST.md). With it,
+ * the database is touched roughly once per region per hour regardless of traffic.
+ *
+ * `latest` is deliberately an ISO string, not a Date — the cached value round-
+ * trips through JSON, and a Date would silently come back as a string on a cache
+ * hit but stay a Date on a miss. Normalising here keeps both paths identical.
+ */
+export async function getHomeData() {
+  return cached("home:v1", HOME_TTL_SECONDS, async () => {
+    const [summary, topSingles, topSealed, movers] = await Promise.all([
+      getSummary(),
+      getTopByMarketPrice({ limit: 20, sealed: false }),
+      getTopByMarketPrice({ limit: 10, sealed: true }),
+      getTopMovers({ limit: 20 }),
+    ]);
+    return {
+      summary: {
+        ...summary,
+        latest: summary.latest ? summary.latest.toISOString().slice(0, 10) : null,
+      },
+      topSingles,
+      topSealed,
+      movers,
+    };
+  });
 }

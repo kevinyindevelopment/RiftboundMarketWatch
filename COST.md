@@ -111,14 +111,44 @@ Still worth confirming in the console (not exposed on the endpoint API):
       compute is ever recreated, re-run `npm run neon:tune` rather than trusting
       it to inherit the right values.
 
-## Biggest outstanding lever
+## Read-path caching — done, and why it looks the way it does
 
-`src/app/page.tsx` is currently `export const dynamic = "force-dynamic"`, so
-**every page view runs ~4 queries against Neon.** That's the right default for
-correctness but the wrong one for cost, given the data changes once a day.
+Homepage data is cached for **1 hour** in two tiers (`src/lib/cache.ts`, entry
+point `getHomeData()`):
 
-The fix is ISR (or an edge cache) with a ~1 h revalidate window, which on
-Cloudflare requires wiring an incremental cache into `open-next.config.ts` (R2 or
-KV) plus the matching binding in `wrangler.jsonc` — see
-<https://opennext.js.org/cloudflare/caching>. Until that's done, **treat public
-traffic as the main cost risk**, not the data.
+1. **Per-isolate memory** — free, absorbs repeat requests within an isolate.
+2. **Workers KV** — survives isolate recycling and cold starts.
+
+Without this, every visitor ran five queries and woke Neon for the full 5-minute
+scale-to-zero window. With it the database is read **at most once an hour**.
+
+**Why not Next.js ISR.** Time-based ISR on Cloudflare needs an incremental cache
+binding *plus* a Durable Object queue, and a tag cache for on-demand
+revalidation — real infrastructure to cache one page that changes once a day.
+Caching the query *results* targets the thing that costs money (Neon compute) and
+leaves the cheap thing (Worker CPU re-rendering React) alone.
+
+**Why KV and not the Workers Cache API.** The Cache API was tried first — it needs
+no binding — and *measured unreliable*. Via `/api/cache-status`:
+
+```
+Cache API:  call 1 → origin (1850ms) | call 2 → edge (40ms) | call 3 → origin (926ms)
+KV:         call 1 → origin (2083ms) | call 2 → kv   (12ms) | call 3 → kv     (72ms)
+```
+
+It evicted between requests and fell back to the database roughly half the time.
+That fails precisely where it matters: **sparse traffic**, where each visitor
+lands on a fresh isolate. KV retains. Cost is ~24 writes/day and a handful of
+reads — far inside the free tier.
+
+Trade-offs to know before changing it:
+- Cached values **round-trip through JSON**, so `Date` becomes `string`.
+  `getHomeData()` normalises dates to ISO strings *before* caching so the hit and
+  miss paths return identical shapes. Keep any new cached payload JSON-safe.
+- Bump the cache key (`home:v1`) when the payload shape changes, or entries
+  written by old code will deserialise into the new shape.
+- KV's minimum `expirationTtl` is 60s; shorter values are rejected.
+
+**Check it's still working:** `GET /riftmarket/api/cache-status` reports the tier
+that served each of two back-to-back calls. If the second says `origin`, the
+cache is retaining nothing and every visitor is waking Neon.
