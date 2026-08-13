@@ -80,12 +80,33 @@ matters far more than row counts.
 
 ## Dashboard settings to confirm (not settable from code)
 
-- [ ] **Autoscale minimum → 0.25 CU.** The max (16 CU) only matters under load; the
-      *minimum* is what you pay whenever the DB is awake. This dataset is tiny and
-      never needs more than the floor.
+> ⚠️ **Neon's "Compute defaults" panel only seeds NEWLY CREATED computes.** It
+> says so in small print and it is easy to miss: setting the defaults there does
+> **not** change the compute this project is already using. Confirmed on
+> 2026-08-13 — the defaults were set to 0.25↔8 CU while the live compute was
+> still reporting `max_connections = 901` (a ~2 CU ceiling; 8 CU would report
+> 3357). Edit the endpoint itself: **Branches → branch → the `ep-…` compute →
+> Edit**.
+
+- [ ] **Autoscale minimum → 0.25 CU**, set *on the endpoint*, not the defaults
+      panel. The maximum only matters under load; the **minimum is what you pay
+      for every minute the database is awake**, so it is the single most
+      important number here.
+- [ ] **Autoscale maximum → 2 CU is plenty.** Do not raise it. A 20 MB database
+      running simple indexed queries will never use 8 CU, and a low ceiling caps
+      the damage if a query ever goes pathological.
 - [ ] **Scale-to-zero → 5 min** (the plan minimum) — confirm it's actually on.
-- [ ] **Instant-restore retention → 24 h** (see rule 4). This is likely the single
-      biggest easy saving after compute.
+- [ ] **Instant-restore / history window → 1 day** (see rule 4). Done.
+
+**How to check the live compute rather than trusting the UI** — `max_connections`
+encodes the autoscale *ceiling* (0.25 CU→104, 1→419, 2→839, 4→1678, 8→3357):
+
+```sql
+SHOW max_connections;
+```
+
+Note this reveals only the ceiling. The minimum — the number that actually drives
+the bill — is not readable from SQL and must be confirmed on the endpoint page.
 
 ## Biggest outstanding lever
 
