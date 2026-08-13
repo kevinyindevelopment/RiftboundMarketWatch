@@ -1,0 +1,62 @@
+# One-shot historical price backfill, run by hand from the Actions tab.
+#
+# Lives in CI rather than on a laptop for one concrete reason: the tcgcsv archives
+# use PPMd compression, which needs the `7z` binary — preinstalled on
+# ubuntu-latest, but an extra install step on Windows/WSL. Running it here means
+# the backfill never depends on local tooling.
+#
+# Safe to re-run: the script skips any day already present in PriceSnapshot, so
+# an interrupted run just resumes.
+name: Backfill price history
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Start date (YYYY-MM-DD). Riftbound's first set was 2025-07-30; the archive itself goes back to 2024-02-08."
+        required: true
+        type: string
+      to:
+        description: "End date (YYYY-MM-DD). Defaults to yesterday — today's archive isn't published until ~20:00 UTC."
+        required: false
+        type: string
+
+concurrency:
+  group: backfill-prices
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    # ~4 MB/day and one request per day, run sequentially to be polite to a free
+    # community mirror. 90 days lands in a few minutes; the ceiling is headroom
+    # for a multi-year range.
+    timeout-minutes: 180
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Confirm 7z is present
+        run: 7z i > /dev/null && echo "7z OK"
+
+      # Products are the FK target for price rows, so they must exist first.
+      # Cheap (~40 requests) and idempotent, so just always do it.
+      - name: Ensure products are ingested
+        run: npm run ingest
+
+      - name: Backfill
+        run: |
+          if [ -n "${{ inputs.to }}" ]; then
+            npm run backfill -- --from "${{ inputs.from }}" --to "${{ inputs.to }}"
+          else
+            npm run backfill -- --from "${{ inputs.from }}"
+          fi

@@ -61,28 +61,25 @@ function dateRange(from: string, to: string): string[] {
   return out;
 }
 
-async function have7z(): Promise<boolean> {
+/**
+ * Locate a 7-Zip binary, probing the names different packages install under
+ * (p7zip-full ships `7z`, p7zip-lite `7za`, the official build `7zz`).
+ * Resolved once and cached — this is called per day otherwise.
+ */
+let cachedBin: string | null | undefined;
+async function sevenZipBin(): Promise<string | null> {
+  if (cachedBin !== undefined) return cachedBin;
   for (const bin of ["7z", "7za", "7zz"]) {
     try {
       await execFileAsync(bin, ["i"]);
-      return true;
-    } catch {
-      /* try next */
-    }
-  }
-  return false;
-}
-
-async function sevenZipBin(): Promise<string> {
-  for (const bin of ["7z", "7za", "7zz"]) {
-    try {
-      await execFileAsync(bin, ["i"]);
+      cachedBin = bin;
       return bin;
     } catch {
-      /* try next */
+      /* try the next name */
     }
   }
-  throw new Error("no 7z binary");
+  cachedBin = null;
+  return null;
 }
 
 /** Download + extract one day, returning that day's category-89 price rows. */
@@ -98,7 +95,7 @@ async function fetchArchiveDay(day: string) {
 
   // Extract ONLY our category. The archive holds every TCGplayer category, and
   // unpacking all of them costs ~40x the disk and time for data we never read.
-  const bin = await sevenZipBin();
+  const bin = (await sevenZipBin())!; // presence checked up front in main()
   await execFileAsync(bin, [
     "x",
     archivePath,
@@ -147,7 +144,7 @@ async function main() {
     console.error("No DATABASE_URL / DIRECT_DATABASE_URL set — see .env.example.");
     process.exit(1);
   }
-  if (!(await have7z())) {
+  if (!(await sevenZipBin())) {
     console.error(
       "`7z` not found on PATH. The tcgcsv archives use PPMd compression, which\n" +
         "Node cannot decompress natively.\n" +
