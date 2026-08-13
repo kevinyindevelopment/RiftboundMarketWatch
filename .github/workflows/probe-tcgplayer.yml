@@ -1,0 +1,59 @@
+# Diagnostic: can a GitHub runner reach TCGplayer's sales endpoint, and how fast?
+#
+# This is not a data job. It exists because two upstreams in this project already
+# behave differently from a datacenter IP than from a home connection (Riftcodex
+# 403s on runners; the tcgcsv archive 401s without a User-Agent). Before building
+# an hourly sales poller on top of Actions, confirm Actions can actually do it.
+name: Probe TCGplayer sales
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Reachability + throughput
+        run: |
+          cat > /tmp/probe.mjs <<'EOF'
+          const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+          async function sales(id) {
+            const res = await fetch(`https://mpapi.tcgplayer.com/v2/product/${id}/latestsales`, {
+              method: "POST",
+              headers: { "user-agent": UA, "content-type": "application/json" },
+              body: JSON.stringify({ limit: 25, listingType: "All", offset: 0, conditions: [1] }),
+            });
+            return { status: res.status, body: res.ok ? await res.json() : null };
+          }
+
+          const first = await sales(705996);
+          console.log("reachable from runner:", first.status);
+          if (first.status !== 200) {
+            console.log("BLOCKED — an Actions-based poller is not viable");
+            process.exit(1);
+          }
+          console.log("sales returned:", first.body.resultCount);
+
+          // Throughput at ~2 req/s, to extrapolate a full 1534-product sweep.
+          const ids = [705996, 685522, 693377, 693382, 685592, 693380, 697969, 705997, 705998, 705999];
+          const t0 = Date.now();
+          let ok = 0, fail = 0;
+          for (const id of ids) {
+            try {
+              const r = await sales(id);
+              r.status === 200 ? ok++ : fail++;
+              if (r.status !== 200) console.log(`  ${id} -> ${r.status}`);
+            } catch (e) { fail++; console.log(`  ${id} -> ${e.message}`); }
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          const ms = Date.now() - t0;
+          console.log(`\n${ok} ok / ${fail} fail in ${ms}ms  (${(ms / ids.length).toFixed(0)}ms per product)`);
+          console.log(`extrapolated full sweep of 1534 products: ${((ms / ids.length) * 1534 / 60000).toFixed(1)} minutes`);
+          EOF
+          node /tmp/probe.mjs
