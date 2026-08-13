@@ -14,7 +14,7 @@
 import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
 import { fetchLatestSales, saleId, type TcgSale } from "../src/lib/tcgplayer-sales";
-import { computeSalePrice, MAX_SALE_AGE_DAYS } from "../src/lib/sale-price";
+import { computeVariantPrices, MAX_SALE_AGE_DAYS } from "../src/lib/sale-price";
 
 /**
  * Parallel requests to TCGplayer.
@@ -197,6 +197,8 @@ async function main() {
         purchasePrice: true,
         orderDate: true,
         condition: true,
+        variant: true,
+        gradeKey: true,
       },
     });
 
@@ -209,22 +211,45 @@ async function main() {
 
     await Promise.all(
       [...byProduct.entries()].map(async ([productId, sales]) => {
-        const result = computeSalePrice(sales);
-        // Write the null too. A product that drops below the sample threshold
-        // must LOSE its price rather than keep the last good one forever —
-        // otherwise a stale figure outlives the evidence for it.
+        // Price each (finish, grade) bucket separately — a blended median across
+        // Normal and Foil described neither (measured up to an 18x gap).
+        const variants = computeVariantPrices(sales);
+
+        // Replace this product's variant rows wholesale: a bucket that no longer
+        // qualifies must disappear, not linger at its last good price.
+        await prisma.productPrice.deleteMany({ where: { productId } });
+        if (variants.length > 0) {
+          await prisma.productPrice.createMany({
+            data: variants.map((v) => ({
+              productId,
+              finish: v.finish,
+              gradeKey: v.gradeKey,
+              price: v.price!,
+              low: v.low!,
+              high: v.high!,
+              sampleSize: v.sampleSize,
+              lastSaleAt: v.lastSaleAt!,
+              source: "tcgplayer",
+            })),
+          });
+        }
+
+        // The denormalised Product.salePrice is the MOST-TRADED bucket, named so
+        // the UI can never show it as though it covered every printing.
+        const primary = variants[0];
         await prisma.product.update({
           where: { productId },
           data: {
-            salePrice: result.price,
-            salePriceLow: result.low,
-            salePriceHigh: result.high,
-            saleSampleSize: result.sampleSize,
-            saleLastAt: result.lastSaleAt,
+            salePrice: primary?.price ?? null,
+            salePriceLow: primary?.low ?? null,
+            salePriceHigh: primary?.high ?? null,
+            saleSampleSize: primary?.sampleSize ?? 0,
+            saleLastAt: primary?.lastSaleAt ?? null,
             salePriceAt: new Date(),
+            salePriceVariant: primary ? `${primary.finish}:${primary.gradeKey}` : null,
           },
         });
-        if (result.price !== null) repriced++;
+        if (primary) repriced++;
       }),
     );
   }
@@ -232,6 +257,7 @@ async function main() {
   // Expire prices for products that got NO new sales this run and whose last
   // sale has now aged out. They never appear in `touched`, so without this sweep
   // their price would persist indefinitely on evidence that no longer qualifies.
+  await prisma.productPrice.deleteMany({ where: { lastSaleAt: { lt: cutoff } } });
   const expired = await prisma.product.updateMany({
     where: { salePrice: { not: null }, saleLastAt: { lt: cutoff } },
     data: {
@@ -240,6 +266,7 @@ async function main() {
       salePriceHigh: null,
       saleSampleSize: 0,
       salePriceAt: new Date(),
+      salePriceVariant: null,
     },
   });
   if (expired.count > 0) {

@@ -26,6 +26,24 @@ served under a sub-path of **kevin-yin.com**.
 TCGplayer's own smoothed algorithm over sales — a step further from the truth and
 a day stale. `marketPrice` is kept as a *fallback* and for history.
 
+## A price belongs to a VARIANT, not a card
+
+**Never compute one price per product.** A price is scoped to a `(finish, grade)`
+pair, stored in `ProductPrice`:
+
+- **Finish** — Normal vs Foil. Measured across 360 products, foils traded up to
+  **18×** their normal counterpart (Traveling Merchant: $0.20 normal, $3.65
+  foil). A blended median described neither, and this was a real shipped bug.
+- **Grade** — raw vs PSA 10 vs BGS 10 Black Label vs CGC Pristine 10 … The same
+  printing is a different market in a slab. See `src/lib/grading.ts`.
+- **Printing** — signature / overnumbered / alternate art. On TCGplayer these are
+  already *separate products*, so they need no extra axis there; for eBay's free
+  text, `parsePrinting()` recovers them.
+
+`Product.salePrice` is a denormalised convenience holding the **most-traded**
+bucket only, named by `Product.salePriceVariant`. The UI must always show that
+label — a bare number implies it covers every printing, which it does not.
+
 `src/lib/sale-price.ts` owns the rules. All of them come from real observed data,
 so don't "simplify" them without new evidence:
 

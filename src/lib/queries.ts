@@ -38,6 +38,12 @@ export type ValuedProduct = {
   source: "sales" | "market";
   sampleSize: number | null;
   lastSaleAt: Date | null;
+  /**
+   * Which variant the price describes, e.g. "Foil:raw".
+   * A price is per (finish, grade) — foils traded up to 18x their normal
+   * counterpart — so this must be shown alongside the number, never dropped.
+   */
+  variant: string | null;
 };
 
 /**
@@ -62,7 +68,8 @@ export async function getTopByValue(
            COALESCE(p."salePrice", ps."marketPrice")::float8 AS price,
            CASE WHEN p."salePrice" IS NOT NULL THEN 'sales' ELSE 'market' END AS source,
            p."saleSampleSize" AS "sampleSize",
-           p."saleLastAt" AS "lastSaleAt"
+           p."saleLastAt" AS "lastSaleAt",
+           p."salePriceVariant" AS variant
     FROM "Product" p
     JOIN "CardSet" s ON s."groupId" = p."groupId"
     LEFT JOIN "PriceSnapshot" ps
@@ -202,9 +209,8 @@ export async function getSummary() {
  * hit but stay a Date on a miss. Normalising here keeps both paths identical.
  */
 export async function getHomeData() {
-  // Key bumped to v2: the payload now carries sales-derived prices, so entries
-  // written by the previous shape must not be deserialised into this one.
-  return cached("home:v2", HOME_TTL_SECONDS, async () => {
+  // v3: rows now carry the variant the price describes.
+  return cached("home:v3", HOME_TTL_SECONDS, async () => {
     const [summary, topSingles, topSealed, movers, salesStats] = await Promise.all([
       getSummary(),
       getTopByValue({ limit: 20, sealed: false }),

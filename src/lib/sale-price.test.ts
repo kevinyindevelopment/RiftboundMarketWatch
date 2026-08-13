@@ -2,6 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   computeSalePrice,
+  computeVariantPrices,
   HEADLINE_CONDITIONS,
   MIN_SAMPLE_SIZE,
   MAX_SALE_AGE_DAYS,
@@ -180,6 +181,89 @@ describe("computeSalePrice", () => {
       opts,
     );
     assert.equal(r.lastSaleAt?.toISOString(), daysAgo(1));
+  });
+});
+
+describe("computeVariantPrices", () => {
+  const vsale = (
+    price: number,
+    days: number,
+    variant: string,
+    gradeKey = "raw",
+    condition = "Near Mint",
+  ) => ({ purchasePrice: price, orderDate: daysAgo(days), condition, variant, gradeKey });
+
+  test("Normal and Foil are priced separately", () => {
+    // Real shape: Traveling Merchant sold at $0.20 normal and $3.65 foil — an
+    // 18x gap. One blended median would describe neither card.
+    const prices = computeVariantPrices(
+      [
+        vsale(0.2, 1, "Normal"),
+        vsale(0.2, 2, "Normal"),
+        vsale(0.2, 3, "Normal"),
+        vsale(3.65, 1, "Foil"),
+        vsale(3.65, 2, "Foil"),
+        vsale(3.65, 3, "Foil"),
+      ],
+      opts,
+    );
+    assert.equal(prices.length, 2);
+    assert.equal(prices.find((p) => p.finish === "Normal")?.price, 0.2);
+    assert.equal(prices.find((p) => p.finish === "Foil")?.price, 3.65);
+  });
+
+  test("grades are priced separately from raw", () => {
+    const prices = computeVariantPrices(
+      [
+        vsale(100, 1, "Foil", "raw"),
+        vsale(100, 2, "Foil", "raw"),
+        vsale(100, 3, "Foil", "raw"),
+        vsale(900, 1, "Foil", "PSA10"),
+        vsale(900, 2, "Foil", "PSA10"),
+        vsale(900, 3, "Foil", "PSA10"),
+      ],
+      opts,
+    );
+    assert.equal(prices.length, 2);
+    assert.equal(prices.find((p) => p.gradeKey === "PSA10")?.price, 900);
+    assert.equal(prices.find((p) => p.gradeKey === "raw")?.price, 100);
+  });
+
+  test("a thin bucket yields no price rather than a bad one", () => {
+    // Foil has 3 sales and qualifies; Normal has 1 and must be omitted entirely
+    // instead of publishing a single-sale median.
+    const prices = computeVariantPrices(
+      [
+        vsale(5, 1, "Foil"),
+        vsale(5, 2, "Foil"),
+        vsale(5, 3, "Foil"),
+        vsale(999, 1, "Normal"),
+      ],
+      opts,
+    );
+    assert.equal(prices.length, 1);
+    assert.equal(prices[0].finish, "Foil");
+  });
+
+  test("most-traded bucket sorts first (it becomes the headline price)", () => {
+    const prices = computeVariantPrices(
+      [
+        vsale(1, 1, "Normal"),
+        vsale(1, 2, "Normal"),
+        vsale(1, 3, "Normal"),
+        vsale(1, 4, "Normal"),
+        vsale(9, 1, "Foil"),
+        vsale(9, 2, "Foil"),
+        vsale(9, 3, "Foil"),
+      ],
+      opts,
+    );
+    assert.equal(prices[0].finish, "Normal");
+    assert.equal(prices[0].sampleSize, 4);
+  });
+
+  test("returns nothing when no bucket qualifies", () => {
+    assert.deepEqual(computeVariantPrices([vsale(5, 1, "Foil")], opts), []);
   });
 });
 

@@ -90,19 +90,23 @@ model Product {
   firstSeenAt DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  // --- Sales-derived current price (the headline number) ---
-  // Computed from the most recent Near Mint sales in `Sale` — see
-  // scripts/recompute-sale-prices.ts. Denormalised onto Product so listing pages
-  // sort and filter without aggregating millions of sale rows per request.
-  salePrice       Float?    // median of the last N qualifying sales
-  salePriceLow    Float?
-  salePriceHigh   Float?
-  saleSampleSize  Int?      // how many sales the median is over (< N early on)
-  saleLastAt      DateTime? // orderDate of the newest sale used
-  salePriceAt     DateTime? // when this was last recomputed
+  // --- Sales-derived price for the PRIMARY variant ---
+  // Denormalised so listing pages can sort without aggregating sales per row.
+  // This is ONE variant's price — the most-traded (finish, grade) bucket, named
+  // by `salePriceVariant`. The full per-variant breakdown lives in ProductPrice;
+  // never present this number without saying which variant it describes.
+  salePrice        Float?
+  salePriceLow     Float?
+  salePriceHigh    Float?
+  saleSampleSize   Int?
+  saleLastAt       DateTime?
+  salePriceAt      DateTime?
+  /// e.g. "Foil:raw" — which bucket `salePrice` came from.
+  salePriceVariant String?
 
-  prices PriceSnapshot[]
-  sales  Sale[]
+  prices        PriceSnapshot[]
+  sales         Sale[]
+  variantPrices ProductPrice[]
 
   @@index([groupId])
   @@index([isSealed])
@@ -164,16 +168,52 @@ model Sale {
   shippingPrice Float
   quantity      Int
   condition     String  // "Near Mint" | "Lightly Played" | "Unopened" | ...
-  variant       String  // "Normal" | "Foil"
+  /// Finish: "Normal" | "Foil". A PRICING AXIS, not a label — measured across
+  /// 360 products the foil traded up to 18x the normal, so a blended median
+  /// describes neither.
+  variant       String
+  /// Grading bucket from src/lib/grading.ts: "raw", "PSA10", "BGS10-BLACK", …
+  /// Always "raw" for TCGplayer, which sells ungraded singles.
+  gradeKey      String  @default("raw")
+  /// Where the sale came from: "tcgplayer" | "ebay".
+  source        String  @default("tcgplayer")
   language      String?
   title         String?
 
   seenAt DateTime @default(now()) // when our poller first observed it
 
-  // Drives the price computation: newest-first within a product+printing, and
-  // the condition filter that keeps Lightly Played out of the headline number.
-  @@index([productId, variant, condition, orderDate])
+  // Drives the price computation: newest-first within a product+variant bucket,
+  // and the condition filter that keeps Lightly Played out of the headline.
+  @@index([productId, variant, gradeKey, condition, orderDate])
   @@index([orderDate])
+}
+
+/// The price of ONE variant of a product — a (finish, grade) pair.
+///
+/// This table exists because "the price of a card" is not a single number.
+/// Measured on real data: foils traded up to 18x their normal counterpart across
+/// 360 products, and a PSA 10 is a different market again from the same card
+/// raw. Collapsing those into one median produces a figure that describes no
+/// purchasable item.
+model ProductPrice {
+  productId Int
+  product   Product @relation(fields: [productId], references: [productId], onDelete: Cascade)
+  /// "Normal" | "Foil"
+  finish    String
+  /// "raw" | "PSA10" | "BGS10-BLACK" | "CGC10-PRISTINE" | …
+  gradeKey  String
+
+  price      Float
+  low        Float
+  high       Float
+  sampleSize Int
+  lastSaleAt DateTime
+  computedAt DateTime @default(now())
+  /// "tcgplayer" | "ebay" — which marketplace's sales produced this.
+  source     String   @default("tcgplayer")
+
+  @@id([productId, finish, gradeKey])
+  @@index([price])
 }
 
 /// One row per completed ingest — so the site can show "last updated" and so a

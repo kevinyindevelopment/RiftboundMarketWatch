@@ -136,7 +136,20 @@ type ValuedRow = {
   source: "sales" | "market";
   sampleSize: number | null;
   lastSaleAt: string | null;
+  variant: string | null;
 };
+
+/** "Foil:raw" -> "Foil"; "Foil:PSA10" -> "Foil · PSA 10". */
+function variantLabel(variant: string | null): string | null {
+  if (!variant) return null;
+  const [finish, grade] = variant.split(":");
+  if (!grade || grade === "raw") return finish;
+  const pretty = grade
+    .replace(/^(PSA|BGS|CGC|SGC)/, "$1 ")
+    .replace("-BLACK", " Black Label")
+    .replace("-PRISTINE", " Pristine");
+  return `${finish} · ${pretty}`;
+}
 
 function PriceTable({ rows }: { rows: ValuedRow[] }) {
   if (rows.length === 0) return <p className="text-zinc-500">No price data yet.</p>;
@@ -158,6 +171,11 @@ function PriceTable({ rows }: { rows: ValuedRow[] }) {
               <a href={r.tcgplayerUrl} className="hover:underline" target="_blank" rel="noreferrer">
                 {r.name}
               </a>
+              {/* The price is per (finish, grade) — showing it without the
+                  variant would imply it covers every printing. */}
+              {r.source === "sales" && variantLabel(r.variant) && (
+                <span className="ml-2 text-xs text-zinc-500">{variantLabel(r.variant)}</span>
+              )}
             </td>
             <td className="text-zinc-400">{r.setName}</td>
             <td className="text-zinc-400">{r.rarity ?? "—"}</td>
