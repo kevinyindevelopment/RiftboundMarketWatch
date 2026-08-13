@@ -1,0 +1,22 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "riftmarket",
+	"main": ".open-next/worker.js",
+	"compatibility_date": "2026-04-15",
+	// nodejs_compat: Node built-ins the Next server + Prisma adapter need.
+	// global_fetch_strictly_public: OpenNext's required fetch semantics.
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+	// Keep the free riftmarket.<subdomain>.workers.dev URL alive alongside the
+	// custom route — it's the runtime smoke-test target before DNS is wired.
+	"workers_dev": true,
+	// Serve only the /riftmarket path of the apex. /riftelo belongs to the
+	// ratings Worker and the rest of kevin-yin.com is left free. Enable after the
+	// workers.dev runtime check passes.
+	"routes": [
+		{ "pattern": "kevin-yin.com/riftmarket*", "zone_name": "kevin-yin.com" }
+	]
+}

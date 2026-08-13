@@ -1,0 +1,140 @@
+// Riftbound Market Watch — data model
+//
+// Card + product metadata comes from TCGplayer (via tcgcsv.com) enriched with
+// Riftcodex; prices are a daily snapshot per (product, printing).
+
+generator client {
+  provider = "prisma-client-js"
+  // Default output (node_modules/@prisma/client) — deliberately NOT a custom
+  // output into src/: a local client gets inlined by `next build` with the Node
+  // export condition, so on Cloudflare Workers it wrongly tries to read the wasm
+  // from disk. As a real package listed in `serverExternalPackages`, Next leaves
+  // it external and OpenNext resolves the "workerd" condition.
+  //
+  // engineType = "client": the GA query compiler — WASM, no native Rust engine,
+  // so there's no per-platform binaryTarget to mismatch. Requires a driver
+  // adapter, and we always pass the Neon one. See src/lib/prisma.ts.
+  engineType = "client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Migrations / introspection use the direct (non-pooler) connection.
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+/// A Riftbound set / product line, as TCGplayer groups them.
+model CardSet {
+  // TCGplayer groupId — the natural key upstream, so we reuse it rather than
+  // minting our own and having to maintain a mapping.
+  groupId        Int      @id
+  name           String
+  abbreviation   String?  // "OGN", "UNL", "VEN", ...
+  publishedOn    DateTime?
+  isSupplemental Boolean  @default(false)
+
+  products Product[]
+
+  @@index([publishedOn])
+}
+
+/// One TCGplayer listing: either a single card or a sealed item.
+///
+/// Singles and sealed live in ONE table because prices attach to a TCGplayer
+/// product id regardless of what it is, and the market view wants both ("what's
+/// a Vendetta booster box worth" is as much a market question as a chase rare).
+/// `isSealed` splits them for the card-database views.
+model Product {
+  // TCGplayer productId — also the join key for every price row.
+  productId    Int     @id
+  name         String
+  cleanName    String
+  isSealed     Boolean @default(false)
+  tcgplayerUrl String
+  imageUrl     String?
+  releasedOn   DateTime?
+
+  groupId Int
+  set     CardSet @relation(fields: [groupId], references: [groupId], onDelete: Cascade)
+
+  // --- TCGplayer extendedData (singles only; null on sealed) ---
+  rarity      String?
+  number      String? // printed collector number, e.g. "SP3/006"
+  cardType    String? // "Champion Unit", "Legend", "Spell", ...
+  description String? // rules text
+  energyCost  String?
+  powerCost   String?
+  might       String?
+  domain      String?
+  tags        String? // ";"-separated upstream, kept verbatim
+
+  // --- Riftcodex enrichment, joined on tcgplayer_id ---
+  riftcodexId      String?
+  riftboundId      String? // canonical id, e.g. "unl-229*-219"
+  setCode          String? // "UNL"
+  collectorNumber  Int?
+  artist           String?
+  flavour          String?
+  officialImageUrl String? // Riot CMS art (higher quality than TCGplayer's 200w)
+  isAlternateArt   Boolean?
+  isSignature      Boolean?
+  /// "tcgplayer_id" | "riftbound_id" | null — how the Riftcodex row was matched.
+  /// Kept so a bad fallback join can be found and audited later.
+  joinedBy         String?
+
+  firstSeenAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  prices PriceSnapshot[]
+
+  @@index([groupId])
+  @@index([isSealed])
+  @@index([rarity])
+  @@index([riftboundId])
+  @@index([name])
+}
+
+/// One day's TCGplayer price for one printing of one product.
+///
+/// The PK is (productId, subTypeName, date): a product can be listed as both
+/// Normal and Foil at different prices, so productId alone is NOT unique — and
+/// re-running the ingest on the same day must overwrite, not duplicate.
+///
+/// `date` is the UTC day (see collect.ts:utcDay). tcgcsv refreshes ~20:00 UTC and
+/// its price payload carries no timestamp of its own, so we stamp our own.
+model PriceSnapshot {
+  productId   Int
+  product     Product @relation(fields: [productId], references: [productId], onDelete: Cascade)
+  subTypeName String  // "Normal" | "Foil"
+  date        DateTime @db.Date
+
+  lowPrice       Float?
+  midPrice       Float?
+  highPrice      Float?
+  // The headline number: TCGplayer's market price (what it actually sells for).
+  marketPrice    Float?
+  directLowPrice Float?
+
+  @@id([productId, subTypeName, date])
+  // Serves "price history for this product" (leading productId) and, separately,
+  // "everything that moved on day X" for the movers board.
+  @@index([date])
+}
+
+/// One row per completed ingest — so the site can show "last updated" and so a
+/// backfill can tell which days it already has without scanning PriceSnapshot.
+model IngestRun {
+  id            Int      @id @default(autoincrement())
+  date          DateTime @db.Date
+  startedAt     DateTime @default(now())
+  finishedAt    DateTime?
+  setCount      Int      @default(0)
+  productCount  Int      @default(0)
+  priceRowCount Int      @default(0)
+  source        String   @default("daily") // "daily" | "backfill"
+  ok            Boolean  @default(false)
+  note          String?
+
+  @@index([date])
+}

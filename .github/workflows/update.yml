@@ -1,0 +1,43 @@
+# Scheduled, cloud-hosted price refresh for the Riftbound Market Watch site.
+#
+# Runs on GitHub's always-on runners (NOT a personal PC), so kevin-yin.com/riftmarket
+# keeps accruing price history even when every local machine is off. This is the
+# same arrangement as the RiftboundElo repo, and for the same reason.
+#
+# The script writes straight to Neon over the direct connection, so no redeploy is
+# needed — the SSR site reads the new data on the next request.
+name: Update prices
+
+on:
+  schedule:
+    # tcgcsv refreshes once a day at ~20:00 UTC, and its price payload is a
+    # snapshot with no intraday detail — so polling more often would just rewrite
+    # the same numbers. Run at 21:15 UTC, comfortably after upstream lands.
+    - cron: "15 21 * * *"
+  workflow_dispatch:
+
+# Never let two refreshes overlap (they'd contend on the same Neon writes).
+concurrency:
+  group: update-prices
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall runs `prisma generate`.
+      - run: npm ci
+
+      - name: Ingest cards + today's prices
+        run: npm run ingest

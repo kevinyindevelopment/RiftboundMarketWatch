@@ -1,0 +1,59 @@
+# See https://help.github.com/articles/ignoring-files/
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# testing
+/coverage
+
+# scratch / ad-hoc debug files
+.scratch_*
+
+# next.js
+/.next/
+/out/
+
+# cloudflare / opennext build output
+/.open-next/
+/.wrangler/
+.dev.vars
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# env: secrets only — .env.example IS committed
+.env
+.env.local
+.env.*.local
+
+# generated Prisma client (regenerated via postinstall)
+src/generated
+
+# Snapshot dumps are regenerable from upstream in ~30s (`npm run snapshot`) and
+# would otherwise add a ~5 MB churning blob to every commit. The DB is the
+# system of record; this dir is a scratch/export area.
+#
+# NOTE: `/data/*` and NOT `/data` — git does not descend into an excluded
+# directory, so a `!` negation inside one never takes effect.
+/data/*
+# ...except the tiny committed sample, so the record shape is documented in-repo.
+!/data/sample-product.json
+
+# 7z scratch for the price-history backfill
+/.backfill-cache

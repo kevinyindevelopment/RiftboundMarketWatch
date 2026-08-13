@@ -1,0 +1,43 @@
+{
+  "_comment": "One representative record, committed as documentation. Regenerate the full dataset with `npm run snapshot`.",
+  "product": {
+    "productId": 705996,
+    "groupId": 24698,
+    "name": "Ahri - Inquisitive",
+    "cleanName": "Ahri Inquisitive",
+    "isSealed": false,
+    "tcgplayerUrl": "https://www.tcgplayer.com/product/705996/riftbound-league-of-legends-trading-card-game-vendetta-ahri-inquisitive",
+    "imageUrl": "https://tcgplayer-cdn.tcgplayer.com/product/705996_200w.jpg",
+    "releasedOn": "2026-07-31T00:00:00",
+    "rarity": "Showcase",
+    "number": "SP3/006",
+    "cardType": "Champion Unit",
+    "description": "When I attack or defend, give an enemy unit here -2 Might this turn, to a minimum of 1 Might.",
+    "energyCost": "3",
+    "powerCost": "1",
+    "might": "3",
+    "domain": "Mind",
+    "tags": "Ahri;Ionia",
+    "riftcodexId": "6a56ab94ff602fd324f475f8",
+    "riftboundId": "ven-sp3-006",
+    "setCode": "VEN",
+    "collectorNumber": 3,
+    "artist": "Wild Rift Splash Team",
+    "flavour": null,
+    "officialImageUrl": "https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/e8d1993018d8317494cbaab4e4dd738c2e80740d-744x1039.png?accountingTag=RB",
+    "isAlternateArt": false,
+    "isSignature": false,
+    "joinedBy": "tcgplayer_id"
+  },
+  "prices": [
+    {
+      "productId": 705996,
+      "subTypeName": "Foil",
+      "lowPrice": 95.46,
+      "midPrice": 147.5,
+      "highPrice": 1000,
+      "marketPrice": 95.01,
+      "directLowPrice": null
+    }
+  ]
+}
