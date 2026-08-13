@@ -383,7 +383,8 @@ export async function getDeals(
 
 /** Headline counts for the landing menu. */
 export async function getMenuStats() {
-  return cached("menu:v1", HOME_TTL_SECONDS, async () => {
+  // v2: the deal count is derived from the same corrected rules.
+  return cached("menu:v2", HOME_TTL_SECONDS, async () => {
     const [products, sales, listings, deals] = await Promise.all([
       prisma.product.count(),
       prisma.sale.count(),
@@ -402,7 +403,10 @@ export async function getMenuStats() {
  * only refresh hourly upstream, so a stale window here costs no accuracy.
  */
 export async function getDealsPageData() {
-  return cached("deals:v2", DEALS_TTL_SECONDS, async () => {
+  // v3: phantom-listing cross-check. Bump this key on any change to what
+  // COUNTS as a deal, not just to the payload shape — otherwise a correctness
+  // fix keeps serving the wrong answer from KV until the TTL lapses.
+  return cached("deals:v3", DEALS_TTL_SECONDS, async () => {
     const [credible, flagged, listings, watched, lastRun] = await Promise.all([
       getDeals({ limit: 120, only: "credible" }),
       // Queried separately with its own budget so the flagged list is always
