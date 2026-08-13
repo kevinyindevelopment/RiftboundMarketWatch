@@ -56,6 +56,22 @@ tcgcsv's group `abbreviation` **is** the Riftcodex set code (`VEN`, `OGN`), so n
 hardcoded group→set table is needed. Promo groups (`PR`/`OPP`/`JDG`) have no
 Riftcodex counterpart and correctly fall through unjoined.
 
+> ⚠️ **Riftcodex 403s from datacenter IPs.** It answers fine from a home
+> connection but returns `403 Forbidden` on GitHub Actions runners — this took
+> down the first backfill run. So **Riftcodex is treated as optional**:
+> `collectAll()` catches the failure, sets `riftcodexAvailable: false`, and
+> carries on with TCGplayer data alone.
+>
+> The subtle part is in `scripts/ingest.ts`: when that flag is false, the
+> enrichment fields are **omitted from the UPDATE** rather than written as null.
+> Writing them would erase art and artist credits already in the database on
+> every cloud run. `IngestRun.note` records when a run was degraded, and
+> `npm run db:verify` prints it.
+>
+> Practical consequence: **enrichment must be refreshed from a non-datacenter
+> IP** (i.e. locally, via `npm run ingest`). The daily cloud job keeps prices
+> current; it cannot pick up art for newly-released cards.
+
 Current coverage: **1349 / 1479 singles joined (91%)**. The remainder are OP
 promos and brand-new signatures that simply aren't in Riftcodex yet — they still
 have full TCGplayer metadata and prices, just no official art.

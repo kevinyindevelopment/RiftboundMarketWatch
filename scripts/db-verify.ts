@@ -53,7 +53,8 @@ async function main() {
   for (const r of runs) {
     console.log(
       `  #${r.id} ${r.date.toISOString().slice(0, 10)} ok=${r.ok} ` +
-        `products=${r.productCount} prices=${r.priceRowCount} source=${r.source}`,
+        `products=${r.productCount} prices=${r.priceRowCount} source=${r.source}` +
+        (r.note ? `\n      note: ${r.note}` : ""),
     );
   }
 }

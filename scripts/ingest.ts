@@ -71,7 +71,8 @@ async function writeAll(data: Collected, log: (m: string) => void) {
   for (const batch of chunk(data.products, UPSERT_CONCURRENCY)) {
     await Promise.all(
       batch.map((p) => {
-        const row = {
+        // Straight from TCGplayer — always authoritative.
+        const tcgplayer = {
           name: p.name,
           cleanName: p.cleanName,
           isSealed: p.isSealed,
@@ -88,6 +89,9 @@ async function writeAll(data: Collected, log: (m: string) => void) {
           might: p.might,
           domain: p.domain,
           tags: p.tags,
+        };
+        // From Riftcodex — every field here is null when it was unreachable.
+        const enrichment = {
           riftcodexId: p.riftcodexId,
           riftboundId: p.riftboundId,
           setCode: p.setCode,
@@ -101,8 +105,14 @@ async function writeAll(data: Collected, log: (m: string) => void) {
         };
         return prisma.product.upsert({
           where: { productId: p.productId },
-          create: { productId: p.productId, ...row },
-          update: row,
+          // On INSERT the nulls are harmless — there's nothing to preserve.
+          create: { productId: p.productId, ...tcgplayer, ...enrichment },
+          // On UPDATE they are NOT harmless: writing them after a failed
+          // Riftcodex fetch would erase art and artist credits already stored.
+          // Omit the block entirely so the existing values survive.
+          update: data.riftcodexAvailable
+            ? { ...tcgplayer, ...enrichment }
+            : tcgplayer,
         });
       }),
     );
@@ -152,6 +162,11 @@ async function writeAll(data: Collected, log: (m: string) => void) {
       productCount: data.products.length,
       priceRowCount: priceRows.length,
       ok: true,
+      // Surfaced in `npm run db:verify` so a silently-degraded run is visible
+      // rather than looking like a clean one.
+      note: data.riftcodexAvailable
+        ? null
+        : "Riftcodex unavailable — prices updated, enrichment preserved from previous run",
     },
   });
 

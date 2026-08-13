@@ -70,7 +70,13 @@ export async function fetchAllCards(
   do {
     const url = `${BASE}/cards?page=${page}&size=${size}`;
     const res = await fetch(url, {
-      headers: { accept: "application/json", "user-agent": "RiftboundMarketWatch" },
+      // Identify the project rather than sending a bare/default agent — some
+      // hosts reject unknown clients outright.
+      headers: {
+        accept: "application/json",
+        "user-agent":
+          "RiftboundMarketWatch/0.1 (+https://github.com/kevinyindevelopment/RiftboundMarketWatch)",
+      },
     });
     if (!res.ok) {
       throw new Error(`riftcodex ${res.status} ${res.statusText} for ${url}`);

@@ -24,6 +24,9 @@ async function main() {
   console.log(`  sets                 ${s.sets}`);
   console.log(`  products             ${s.products}  (${s.singles} singles, ${s.sealed} sealed)`);
   console.log(`  price rows           ${s.priceRows}  (${s.productsWithPrice} distinct products priced)`);
+  if (!data.riftcodexAvailable) {
+    console.log("  !! Riftcodex was unavailable — enrichment fields are empty");
+  }
   console.log(`  riftcodex cards      ${s.riftcodexCards}`);
   console.log(
     `  joined to riftcodex  ${s.matchedToRiftcodex}` +

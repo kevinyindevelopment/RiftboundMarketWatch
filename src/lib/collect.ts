@@ -81,6 +81,12 @@ export type Collected = {
   sets: CollectedSet[];
   products: CollectedProduct[];
   prices: CollectedPrice[];
+  /**
+   * False when the Riftcodex fetch failed and every product came back
+   * unenriched. Consumers MUST check this before writing: persisting an
+   * unenriched run as if it were authoritative would wipe existing art.
+   */
+  riftcodexAvailable: boolean;
   stats: {
     sets: number;
     products: number;
@@ -161,13 +167,28 @@ export async function collectAll(
 ): Promise<Collected> {
   const fetchedAt = new Date();
 
+  // Riftcodex is ENRICHMENT, not the core dataset — prices are the product, and
+  // they come from tcgcsv. Riftcodex 403s from datacenter IPs (GitHub Actions
+  // runners get blocked; a home connection doesn't), so a hard dependency here
+  // would take the whole daily price update down. Degrade instead.
   log("Fetching Riftcodex card metadata…");
-  const cards = await fetchAllCards((n, total) =>
-    log(`  cards ${n}/${total}`),
-  );
+  let cards: RiftcodexCard[] = [];
+  let riftcodexAvailable = true;
+  try {
+    cards = await fetchAllCards((n, total) => log(`  cards ${n}/${total}`));
+    log(`  ${cards.length} cards`);
+  } catch (err) {
+    riftcodexAvailable = false;
+    log(
+      `  WARNING: Riftcodex unavailable (${err instanceof Error ? err.message : err}).\n` +
+        "  Continuing with TCGplayer data only — enrichment fields will be left untouched.",
+    );
+  }
   const cardsByProductId = indexByTcgplayerId(cards);
   const cardsByRiftboundId = indexByRiftboundId(cards);
-  log(`  ${cards.length} cards (${cardsByProductId.size} with a TCGplayer id)`);
+  if (riftcodexAvailable) {
+    log(`  ${cardsByProductId.size} with a TCGplayer id`);
+  }
 
   log("Fetching TCGplayer sets…");
   const groups = await fetchGroups();
@@ -227,6 +248,7 @@ export async function collectAll(
   return {
     date: utcDay(fetchedAt),
     fetchedAt: fetchedAt.toISOString(),
+    riftcodexAvailable,
     sets: groups.map((g) => ({
       groupId: g.groupId,
       name: g.name,
