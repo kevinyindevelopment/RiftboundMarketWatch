@@ -1,7 +1,14 @@
 // Turning a list of sales into "the price of this card".
 
-/** How many recent sales the headline price is computed over. */
-export const PRICE_SAMPLE_SIZE = 10;
+/**
+ * How many recent sales the headline price is computed over.
+ *
+ * Five, matching what TCGplayer actually exposes per product — `limit` and
+ * `offset` are ignored upstream, so five is the natural unit. Accumulating a
+ * deeper window is still worthwhile (it's what survives a card selling several
+ * times between polls), but the price itself reads the freshest five.
+ */
+export const PRICE_SAMPLE_SIZE = 5;
 
 /**
  * Sales older than this don't count toward the current price.

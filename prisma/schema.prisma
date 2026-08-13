@@ -79,6 +79,10 @@ model Product {
   officialImageUrl String? // Riot CMS art (higher quality than TCGplayer's 200w)
   isAlternateArt   Boolean?
   isSignature      Boolean?
+  /// Collector number exceeds the set size (e.g. 187/166). A distinct printing
+  /// and a distinct market — and it composes with `isSignature`, so an
+  /// "overnumbered signature" is its own thing again. See src/lib/grading.ts.
+  isOvernumbered   Boolean?
   /// "tcgplayer_id" | "riftbound_id" | null — how the Riftcodex row was matched.
   /// Kept so a bad fallback join can be found and audited later.
   joinedBy         String?

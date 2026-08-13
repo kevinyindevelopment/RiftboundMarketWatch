@@ -60,6 +60,7 @@ export type CollectedProduct = {
   officialImageUrl: string | null;
   isAlternateArt: boolean | null;
   isSignature: boolean | null;
+  isOvernumbered: boolean | null;
   /** How the Riftcodex row was found: null when unjoined. */
   joinedBy: "tcgplayer_id" | "riftbound_id" | null;
 };
@@ -151,6 +152,7 @@ function normalizeProduct(
     officialImageUrl: card?.media?.image_url ?? null,
     isAlternateArt: card?.metadata?.alternate_art ?? null,
     isSignature: card?.metadata?.signature ?? null,
+    isOvernumbered: card?.metadata?.overnumbered ?? null,
     joinedBy: card ? joinedBy : null,
   };
 }

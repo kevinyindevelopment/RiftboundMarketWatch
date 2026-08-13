@@ -101,6 +101,7 @@ async function writeAll(data: Collected, log: (m: string) => void) {
           officialImageUrl: p.officialImageUrl,
           isAlternateArt: p.isAlternateArt,
           isSignature: p.isSignature,
+          isOvernumbered: p.isOvernumbered,
           joinedBy: p.joinedBy,
         };
         return prisma.product.upsert({
