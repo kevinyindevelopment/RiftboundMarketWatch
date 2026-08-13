@@ -34,6 +34,19 @@ const execFileAsync = promisify(execFile);
 const CACHE = resolve(".backfill-cache");
 const ARCHIVE_BASE = "https://tcgcsv.com/archive/tcgplayer";
 
+/**
+ * The archive host rejects requests with NO User-Agent header with a bare
+ * `401 Unauthorized` — which reads exactly like "this endpoint needs auth" and
+ * sent an earlier debugging pass chasing a nonexistent IP block. Node's `fetch`
+ * sends no UA by default (PowerShell/curl do, which is why the same URL appeared
+ * to work by hand and fail from the script).
+ *
+ * Any non-empty value is accepted; verified against none/curl/browser/this one.
+ * Do not remove.
+ */
+const UA =
+  "RiftboundMarketWatch/0.1 (+https://github.com/kevinyindevelopment/RiftboundMarketWatch)";
+
 function parseArgs() {
   const args = process.argv.slice(2);
   const get = (flag: string) => {
@@ -88,7 +101,7 @@ async function fetchArchiveDay(day: string) {
   const archivePath = join(CACHE, `${day}.7z`);
   const outDir = join(CACHE, day);
 
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: { "user-agent": UA } });
   if (res.status === 404) return null; // upstream simply has no file for that day
   if (!res.ok) throw new Error(`archive ${res.status} ${res.statusText} for ${url}`);
   writeFileSync(archivePath, Buffer.from(await res.arrayBuffer()));
@@ -184,6 +197,8 @@ async function main() {
 
   let written = 0;
   let skipped = 0;
+  let failed = 0;
+  let rowsTotal = 0;
   for (const day of days) {
     if (existing.has(day)) {
       skipped++;
@@ -215,11 +230,13 @@ async function main() {
         });
       }
       written++;
+      rowsTotal += usable.length;
       console.log(
         `  ${day}  ${usable.length} rows (${rows.length - usable.length} unknown products skipped)`,
       );
     } catch (err) {
       // One bad day shouldn't abort a 380-day catch-up.
+      failed++;
       console.warn(`  ${day}  FAILED: ${err instanceof Error ? err.message : err}`);
     } finally {
       rmSync(join(CACHE, day), { recursive: true, force: true });
@@ -227,7 +244,26 @@ async function main() {
     }
   }
 
-  console.log(`\nDone: ${written} day(s) written, ${skipped} already present.`);
+  console.log(
+    `\nDone: ${written} day(s) written (${rowsTotal} rows), ` +
+      `${skipped} already present, ${failed} failed.`,
+  );
+
+  // Exit non-zero when the run accomplished nothing but had work to do.
+  // The first CI attempt failed EVERY day (missing User-Agent -> 401) yet still
+  // exited 0, so the workflow reported success while writing nothing. A green
+  // check that means "silently did nothing" is worse than no check at all.
+  const attempted = days.length - skipped;
+  if (attempted > 0 && written === 0) {
+    console.error(
+      `\nFAILED: ${attempted} day(s) attempted, none written (${failed} errored).`,
+    );
+    process.exit(1);
+  }
+  // Partial failure is worth surfacing too, without discarding what landed.
+  if (failed > 0) {
+    console.warn(`\nWARNING: ${failed} day(s) failed; re-run to retry just those.`);
+  }
 }
 
 main()

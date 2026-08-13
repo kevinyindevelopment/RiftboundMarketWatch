@@ -4,6 +4,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 differ from your training data. Read the relevant guide in
 `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 
+> 💸 **Read [COST.md](COST.md) before changing anything that touches the
+> database.** This project runs on a paid Neon plan and must stay near-free.
+> Compute (query frequency), not storage, is the cost driver.
+
 # What this is
 
 **Riftbound Market Watch** tracks TCGplayer prices for every released Riftbound
@@ -58,7 +62,10 @@ Riftcodex counterpart and correctly fall through unjoined.
 
 > ⚠️ **Riftcodex 403s from datacenter IPs.** It answers fine from a home
 > connection but returns `403 Forbidden` on GitHub Actions runners — this took
-> down the first backfill run. So **Riftcodex is treated as optional**:
+> down the first backfill run. Note this is a *different* failure from the tcgcsv
+> archive 401 above: a descriptive `User-Agent` was already being sent when
+> Riftcodex 403'd, so it is presumed IP-based, not header-based. Don't burn time
+> re-testing headers. So **Riftcodex is treated as optional**:
 > `collectAll()` catches the failure, sets `riftcodexAvailable: false`, and
 > carries on with TCGplayer data alone.
 >
@@ -82,7 +89,14 @@ have full TCGplayer metadata and prices, just no official art.
 | --- | --- | --- |
 | `npm run snapshot` | **No** | Dumps the whole dataset to `data/*.json`. The zero-credential path; use it to sanity-check upstream. |
 | `npm run ingest` | Yes | Same fetch, written to Neon. **Idempotent** — re-running on the same UTC day overwrites that day rather than duplicating. |
-| `npm run backfill -- --from YYYY-MM-DD` | Yes | Historical prices from the tcgcsv archive (back to 2024-02-08). **Requires `7z` on PATH** (PPMd; Node's zlib can't read it). |
+| `npm run backfill -- --from YYYY-MM-DD` | Yes | Historical prices from the tcgcsv archive (back to 2024-02-08). **Requires `7z` on PATH** (PPMd; Node's zlib can't read it). Run it via the `backfill.yml` workflow, where 7z is preinstalled. |
+
+> ⚠️ **The tcgcsv archive host 401s a request with NO `User-Agent`.** Node's
+> `fetch` sends none by default, so `fetch(url)` gets `401 Unauthorized` while the
+> same URL downloads fine from PowerShell or curl. That looks exactly like "this
+> endpoint requires auth" and cost a debugging cycle chasing an imagined IP block.
+> **Any** non-empty UA is accepted. `scripts/backfill-prices.ts` sets one — don't
+> remove it.
 
 `snapshot` and `ingest` run the *same* `collectAll()` from `src/lib/collect.ts`,
 which has no DB dependency — so the offline dump and the real ingest can't drift.
