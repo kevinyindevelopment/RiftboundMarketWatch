@@ -13,8 +13,20 @@ import "dotenv/config";
 import { collectAll, type Collected } from "../src/lib/collect";
 import { prisma } from "../src/lib/prisma";
 
-/** Neon round-trips dominate the runtime, so writes go out in batches. */
+/** Rows per `createMany` — one statement, so this can be large. */
 const CHUNK = 200;
+
+/**
+ * Concurrent product upserts in flight.
+ *
+ * These deliberately do NOT run inside `$transaction`: a batch of 200 upserts
+ * blows Prisma's 5s interactive-transaction limit over a remote Neon connection
+ * (P2028). Nothing here needs cross-row atomicity — the ingest is an idempotent
+ * sync, so a half-finished run is simply fixed by the next one. Firing them
+ * concurrently instead is both faster than a sequential transaction and immune
+ * to the timeout. Kept modest so we don't exhaust the connection pool.
+ */
+const UPSERT_CONCURRENCY = 16;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -53,11 +65,11 @@ async function writeAll(data: Collected, log: (m: string) => void) {
   log(`  sets:     ${data.sets.length}`);
 
   // --- Products -----------------------------------------------------------
-  // Prisma has no bulk upsert, so batch the per-row upserts into transactions:
-  // ~1.5k sequential round-trips to Neon would otherwise dominate the run.
+  // Prisma has no bulk upsert, so these go out as concurrent single-row
+  // upserts (see UPSERT_CONCURRENCY for why not a transaction).
   let productsWritten = 0;
-  for (const batch of chunk(data.products, CHUNK)) {
-    await prisma.$transaction(
+  for (const batch of chunk(data.products, UPSERT_CONCURRENCY)) {
+    await Promise.all(
       batch.map((p) => {
         const row = {
           name: p.name,
@@ -95,8 +107,13 @@ async function writeAll(data: Collected, log: (m: string) => void) {
       }),
     );
     productsWritten += batch.length;
-    log(`  products: ${productsWritten}/${data.products.length}`);
+    // Batches are small (concurrency-sized), so throttle the progress line —
+    // otherwise this prints ~100 times.
+    if (productsWritten % 200 < UPSERT_CONCURRENCY) {
+      log(`  products: ${productsWritten}/${data.products.length}`);
+    }
   }
+  log(`  products: ${productsWritten}/${data.products.length} done`);
 
   // --- Prices -------------------------------------------------------------
   // Replace-then-insert makes the day idempotent: a retry can't double-write,
