@@ -12,6 +12,7 @@
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "db:verify": "tsx scripts/db-verify.ts",
+    "neon:tune": "tsx scripts/neon-tune.ts",
     "snapshot": "tsx scripts/snapshot.ts",
     "ingest": "tsx scripts/ingest.ts",
     "backfill": "tsx scripts/backfill-prices.ts",
