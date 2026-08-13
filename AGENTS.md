@@ -129,3 +129,13 @@ Same constraints as RiftboundElo:
   `>=16.2.11`). Pinning an older 16.2.x fails `npm install` outright.
 - Data changes need **no redeploy** — the scripts write straight to Neon and the
   SSR site reads it on the next request.
+- **`.env` is NOT bundled into the Worker.** The deployed app reads
+  `DATABASE_URL` (the *pooled* URL) from a Cloudflare secret, set once with
+  `npx wrangler secret put DATABASE_URL`. A local `.env` alone gets you a
+  deployed site that renders the "No database yet" fallback. `wrangler secret
+  list` shows what's set. The direct URL is *not* needed at runtime — only the
+  CLI scripts use it.
+
+Live URLs:
+- <https://kevin-yin.com/riftmarket> (production route)
+- <https://riftmarket.doombornegame.workers.dev/riftmarket> (smoke-test target)

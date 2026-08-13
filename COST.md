@@ -20,14 +20,24 @@ Neon **Launch**:
 
 **Compute is the cost. Storage is rounding error.** Do not optimize the wrong one.
 
-Storage math for this dataset:
-- `Product` — 1,534 rows of mostly short text ≈ **~1 MB**, and it barely grows
-  (a new set adds ~300 rows a few times a year).
-- `PriceSnapshot` — ~1,993 rows/day × ~50 B ≈ 100 KB/day ≈ **~35 MB/year**, call
-  it ~80 MB/year with indexes.
+Measured on 2026-08-13 with 91 days of history loaded (`npm run db:verify`):
 
-So a full year of price history costs roughly **$0.03/month** in storage. Storage
-is not worth contorting the schema over.
+```
+PriceSnapshot    18 MB      154,820 rows
+Product          1712 kB      1,534 rows
+IngestRun          80 kB
+CardSet            48 kB
+TOTAL            20.3 MB
+~228 KB/day  →  ~81 MB/yr  ≈  $0.03/mo storage at year end
+```
+
+`Product` barely grows (a new set adds ~300 rows a few times a year).
+`PriceSnapshot` is the only real growth: ~1,700–2,000 rows every day, forever.
+
+So **a full year of price history costs about three cents a month**. Storage is
+not worth contorting the schema over — do not add delta-encoding, pruning, or
+archival tiers to "save space" unless the numbers above change by orders of
+magnitude. Re-run `npm run db:verify` to check rather than guessing.
 
 Compute is different. Neon bills CU-hours, and **scale-to-zero only helps if
 nothing is talking to the database**. A single request after an idle period spins

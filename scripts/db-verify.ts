@@ -35,16 +35,47 @@ async function main() {
       (days.length ? `  ${days[0]} → ${days[days.length - 1]}` : ""),
   );
 
+  // Scope to the newest day. Without this the "top" list is ranked across all
+  // 90+ stored days and just repeats whichever card is dearest, once per day.
+  const latest = days.length ? new Date(`${days[days.length - 1]}T00:00:00.000Z`) : undefined;
   const top = await prisma.priceSnapshot.findMany({
-    where: { marketPrice: { not: null }, product: { isSealed: false } },
+    where: { date: latest, marketPrice: { not: null }, product: { isSealed: false } },
     orderBy: { marketPrice: "desc" },
     take: 5,
     include: { product: true },
   });
-  console.log("\n=== TOP 5 SINGLES BY MARKET PRICE ===");
+  console.log(`\n=== TOP 5 SINGLES BY MARKET PRICE (${days[days.length - 1] ?? "n/a"}) ===`);
   for (const t of top) {
     console.log(
       `  $${String(t.marketPrice).padStart(8)}  ${t.subTypeName.padEnd(6)} ${t.product.name}`,
+    );
+  }
+
+  // Storage is billed per GB-month (see COST.md), so keep it visible. Growth is
+  // driven almost entirely by PriceSnapshot: ~1.7k rows every day, forever.
+  // Casts to ::text are required, not cosmetic: `relname` is the Postgres `name`
+  // type and `pg_total_relation_size` returns bigint, neither of which the Neon
+  // driver adapter can deserialize (P2010 UnsupportedNativeDataType).
+  const sizes = await prisma.$queryRaw<
+    { table: string; total: string; bytes: string }[]
+  >`
+    SELECT c.relname::text AS table,
+           pg_size_pretty(pg_total_relation_size(c.oid))::text AS total,
+           pg_total_relation_size(c.oid)::text AS bytes
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind = 'r'
+    ORDER BY pg_total_relation_size(c.oid) DESC
+  `;
+  const totalBytes = sizes.reduce((a, s) => a + Number(s.bytes), 0);
+  console.log("\n=== STORAGE (indexes included) ===");
+  for (const s of sizes) console.log(`  ${s.table.padEnd(16)} ${s.total}`);
+  console.log(`  ${"TOTAL".padEnd(16)} ${(totalBytes / 1024 / 1024).toFixed(1)} MB`);
+  if (days.length > 1) {
+    const perDay = totalBytes / days.length;
+    console.log(
+      `  ~${(perDay / 1024).toFixed(0)} KB/day → ~${((perDay * 365) / 1024 / 1024).toFixed(0)} MB/yr` +
+        ` ≈ $${(((perDay * 365) / 1024 / 1024 / 1024) * 0.35).toFixed(2)}/mo storage at year end`,
     );
   }
 
