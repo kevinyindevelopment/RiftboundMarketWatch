@@ -69,10 +69,39 @@ type Endpoint = {
   suspend_timeout_seconds: number;
 };
 
+/**
+ * List every project the key can see.
+ *
+ * Bare `GET /projects` 400s with "org_id is required" for org-scoped accounts,
+ * which is now the default for new Neon signups. Fall back to enumerating the
+ * key's organizations and listing each one's projects.
+ */
+async function listProjects(): Promise<Project[]> {
+  try {
+    const { projects } = await api<{ projects: Project[] }>("/projects");
+    if (projects.length) return projects;
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.includes("org_id")) throw err;
+  }
+
+  const { organizations } = await api<{ organizations: { id: string; name: string }[] }>(
+    "/users/me/organizations",
+  );
+  const all: Project[] = [];
+  for (const org of organizations ?? []) {
+    const { projects } = await api<{ projects: Project[] }>(
+      `/projects?org_id=${encodeURIComponent(org.id)}`,
+    );
+    console.log(`  org ${org.name} (${org.id}): ${projects.length} project(s)`);
+    all.push(...projects);
+  }
+  return all;
+}
+
 async function main() {
   const apply = process.argv.includes("--apply");
 
-  const { projects } = await api<{ projects: Project[] }>("/projects");
+  const projects = await listProjects();
   if (!projects.length) {
     console.error("No Neon projects visible to this API key.");
     process.exit(1);

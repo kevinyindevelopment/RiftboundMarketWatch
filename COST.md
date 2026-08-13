@@ -78,35 +78,38 @@ matters far more than row counts.
 7. **Verify with `npm run db:verify`, not by browsing in Studio.** `prisma studio`
    holds a connection open and keeps compute warm.
 
-## Dashboard settings to confirm (not settable from code)
+## Compute settings — managed by `npm run neon:tune`
 
-> ⚠️ **Neon's "Compute defaults" panel only seeds NEWLY CREATED computes.** It
-> says so in small print and it is easy to miss: setting the defaults there does
-> **not** change the compute this project is already using. Confirmed on
-> 2026-08-13 — the defaults were set to 0.25↔8 CU while the live compute was
-> still reporting `max_connections = 901` (a ~2 CU ceiling; 8 CU would report
-> 3357). Edit the endpoint itself: **Branches → branch → the `ep-…` compute →
-> Edit**.
+**Don't set these by hand.** `scripts/neon-tune.ts` holds the targets and applies
+them through the Neon API. Dry-run by default; `-- --apply` writes; re-running is
+idempotent. Applied and verified 2026-08-13:
 
-- [ ] **Autoscale minimum → 0.25 CU**, set *on the endpoint*, not the defaults
-      panel. The maximum only matters under load; the **minimum is what you pay
-      for every minute the database is awake**, so it is the single most
-      important number here.
-- [ ] **Autoscale maximum → 2 CU is plenty.** Do not raise it. A 20 MB database
-      running simple indexed queries will never use 8 CU, and a low ceiling caps
-      the damage if a query ever goes pathological.
-- [ ] **Scale-to-zero → 5 min** (the plan minimum) — confirm it's actually on.
-- [ ] **Instant-restore / history window → 1 day** (see rule 4). Done.
+| Setting | Value | Why |
+| --- | --- | --- |
+| `autoscaling_limit_min_cu` | **0.25** | Billed for every minute the DB is awake — **the number that matters**. |
+| `autoscaling_limit_max_cu` | **2** | A 20 MB DB on indexed queries never needs more; a low ceiling caps a pathological query. Was 8. |
+| `suspend_timeout_seconds` | **300** | Scale to zero after 5 min. Set explicitly so it can't drift with the account default. |
+| `history_retention_seconds` | **86400** | 1 day. The DB is reproducible from upstream (rule 4). |
 
-**How to check the live compute rather than trusting the UI** — `max_connections`
-encodes the autoscale *ceiling* (0.25 CU→104, 1→419, 2→839, 4→1678, 8→3357):
+Two API quirks worth knowing:
 
-```sql
-SHOW max_connections;
-```
+- `suspend_timeout_seconds: 0` does **not** mean "never suspend" — it means *use
+  the account default*. `-1` is never. A `0` here is not a bug.
+- `GET /projects` returns `400 org_id is required` on org-scoped accounts (now the
+  default). The script enumerates `/users/me/organizations` and lists per-org.
 
-Note this reveals only the ceiling. The minimum — the number that actually drives
-the bill — is not readable from SQL and must be confirmed on the endpoint page.
+> ⚠️ **Do not infer the CU range from `max_connections`.** An earlier pass did
+> exactly that — read `max_connections = 901`, matched it against Neon's published
+> table (2 CU → 839, 8 CU → 3357), and concluded the compute was capped at ~2 CU.
+> **That was wrong**: the API showed the endpoint really was 0.25↔8. The published
+> mapping does not reliably reflect an autoscaling endpoint's configured ceiling.
+> `npm run neon:tune` reads the actual config — use it instead of guessing from SQL.
+
+Still worth confirming in the console (not exposed on the endpoint API):
+
+- [ ] The **Compute defaults** panel seeds only newly created computes, so if a
+      compute is ever recreated, re-run `npm run neon:tune` rather than trusting
+      it to inherit the right values.
 
 ## Biggest outstanding lever
 
