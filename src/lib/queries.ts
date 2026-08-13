@@ -3,7 +3,12 @@
 
 import { prisma } from "./prisma";
 import { cached, HOME_TTL_SECONDS, DEALS_TTL_SECONDS } from "./cache";
-import { DEAL_THRESHOLD, MIN_WATCH_VALUE, SUSPICIOUS_DISCOUNT } from "./deals";
+import {
+  DEAL_THRESHOLD,
+  MIN_WATCH_VALUE,
+  SUSPICIOUS_DISCOUNT,
+  MIN_FRACTION_OF_LOW_PRICE,
+} from "./deals";
 import {
   buildPool,
   cardPrice,
@@ -266,6 +271,8 @@ export type DealRow = {
   savings: number;
   /** Savings after the seller's shipping — what you actually gain. */
   netSavings: number;
+  /** TCGplayer's own lowest ask, used to cross-check the listing is real. */
+  lowPrice: number | null;
   /** Implausibly cheap — likely mis-listed. Shown, but ranked below real deals. */
   suspicious: boolean;
   sellerName: string | null;
@@ -311,7 +318,8 @@ export async function getDeals(
              l."sellerRating",
              COALESCE(vp.price, ps."marketPrice")::float8 AS "benchmarkPrice",
              CASE WHEN vp.price IS NOT NULL THEN 'sales' ELSE 'market' END AS "benchmarkSource",
-             vp."sampleSize"
+             vp."sampleSize",
+             ps."lowPrice"::float8 AS "lowPrice"
       FROM "Listing" l
       -- Same finish, ungraded: TCGplayer sells raw singles.
       LEFT JOIN "ProductPrice" vp
@@ -342,6 +350,7 @@ export async function getDeals(
              AS "netSavings",
            ((b."benchmarkPrice" - b."listingPrice") / b."benchmarkPrice" >= ${SUSPICIOUS_DISCOUNT})
              AS suspicious,
+           b."lowPrice",
            b."sellerName",
            b."sellerRating",
            p."tcgplayerUrl"
@@ -355,6 +364,11 @@ export async function getDeals(
       -- Shipping must not eat the saving. A penny common at 71% off "saves"
       -- $0.37 and costs $1.49 to post — a percentage, not a deal.
       AND (b."benchmarkPrice" - b."listingPrice" - b."shippingPrice") > 0
+      -- Cross-check against TCGplayer's OWN lowest ask. The listings endpoint is
+      -- a search index that serves listings which no longer exist; anything far
+      -- below the platform's own minimum is a ghost, not a bargain.
+      AND (b."lowPrice" IS NULL OR b."lowPrice" <= 0
+           OR b."listingPrice" >= b."lowPrice" * ${MIN_FRACTION_OF_LOW_PRICE})
       -- Eligibility: high rarity, or actually worth something.
       AND (p.rarity IN ('Epic', 'Showcase') OR b."benchmarkPrice" > ${MIN_WATCH_VALUE})
     -- Credible deals first. Ranking purely by discount would park mis-listings
@@ -481,7 +495,12 @@ export type BoxEvSet = {
  * latter, while Rare and above exist only as Foil (see box-ev.ts).
  */
 export async function getBoxEvPageData() {
-  return cached("boxev:v1", HOME_TTL_SECONDS, async () => {
+  // v2: pools now split sales-verified value from market estimates
+  // (`unverifiedN`/`unverifiedSum`), and Crystal Rose joined the alt-art pool.
+  // The key MUST be bumped alongside either change — a v1 entry written by the
+  // old code deserialises into the new shape without error and silently serves
+  // the old EV, with `unverifiedN` undefined so nothing even looks wrong.
+  return cached("boxev:v2", HOME_TTL_SECONDS, async () => {
     const [cards, sealed] = await Promise.all([
       prisma.$queryRaw<BoxEvQueryRow[]>`
         SELECT p."productId", p.name, s.abbreviation AS "setCode", s.name AS "setName",

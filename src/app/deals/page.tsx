@@ -155,9 +155,11 @@ function DealTable({ rows }: { rows: Row[] }) {
               </td>
               <td className="text-zinc-400">
                 {d.sellerName ?? "—"}
+                {/* sellerRating is already a percentage (100 = 100%), not a
+                    fraction — multiplying by 100 rendered "10000%". */}
                 {d.sellerRating != null && (
                   <span className="ml-1 text-xs text-zinc-600">
-                    {(d.sellerRating * 100).toFixed(0)}%
+                    {d.sellerRating.toFixed(0)}%
                   </span>
                 )}
               </td>

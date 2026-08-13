@@ -4,6 +4,7 @@ import {
   scoreDeal,
   isComparableListing,
   isCatalogueListing,
+  isPlausibleListing,
   isWatchedProduct,
   DEAL_THRESHOLD,
   DEAL_LANGUAGE,
@@ -115,6 +116,46 @@ describe("isComparableListing", () => {
 
   test("non-positive prices are excluded", () => {
     assert.equal(isComparableListing(listing({ price: 0 })), false);
+  });
+});
+
+describe("isPlausibleListing — the phantom-listing cross-check", () => {
+  test("rejects listings far below TCGplayer's own lowest ask", () => {
+    // Measured: the search index served these three, none purchasable.
+    assert.equal(isPlausibleListing(108.99, 459.98), false); // Heimerdinger
+    assert.equal(isPlausibleListing(27.38, 84.0), false); // Caitlyn
+    assert.equal(isPlausibleListing(13.93, 28.66), false); // Invert Timelines
+  });
+
+  test("accepts listings at or near the lowest ask", () => {
+    // Genuine listings sit at listing ~= lowPrice — often the deal IS the low
+    // ask, e.g. Fury Rune listed $11.77 with lowPrice $11.77 against $20 value.
+    assert.equal(isPlausibleListing(11.77, 11.77), true);
+    assert.equal(isPlausibleListing(12.95, 11.77), true); // above low, fine
+    assert.equal(isPlausibleListing(0.39, 0.25), true);
+  });
+
+  test("rejects the middle band that looked plausible but wasn't", () => {
+    // The first attempt allowed anything above half the low ask, which let
+    // Next-Gen Games' Yasuo through at ratio 0.57 — the same seller as two
+    // already-confirmed phantoms. lowPrice is TCGplayer's MINIMUM ask, so a
+    // real listing cannot sit meaningfully below it.
+    assert.equal(isPlausibleListing(17.08, 29.99), false); // ratio 0.57
+    assert.equal(isPlausibleListing(2.49, 4.0), false); // ratio 0.62
+    assert.equal(isPlausibleListing(5.0, 6.09), false); // ratio 0.82
+  });
+
+  test("allows 5% slack for rounding and intraday drift", () => {
+    assert.equal(isPlausibleListing(95, 100), true);
+    assert.equal(isPlausibleListing(94, 100), false);
+  });
+
+  test("no lowPrice means no second opinion — allowed, not rejected", () => {
+    // Brand-new products have no daily price sync yet; a new set must not be
+    // invisible for a day.
+    assert.equal(isPlausibleListing(10, null), true);
+    assert.equal(isPlausibleListing(10, undefined), true);
+    assert.equal(isPlausibleListing(10, 0), true);
   });
 });
 

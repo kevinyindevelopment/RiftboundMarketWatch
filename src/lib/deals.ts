@@ -38,6 +38,59 @@ export const DEAL_THRESHOLD = 0.2;
  */
 export const SUSPICIOUS_DISCOUNT = 0.75;
 
+/**
+ * A listing must be at least this fraction of TCGplayer's OWN published lowest
+ * ask to be believed.
+ *
+ * The listings endpoint is a SEARCH INDEX (`mp-search-api`, and every row
+ * carries a `score`), and it serves listings that no longer exist. Verified
+ * against tcgcsv's `lowPrice` — which comes from TCGplayer's pricing system, a
+ * different source:
+ *
+ *   Heimerdinger, Inventor   index said $108.99   TCGplayer's lowest ask $459.98
+ *   Caitlyn, Patrolling      index said  $27.38   TCGplayer's lowest ask  $84.00
+ *   Invert Timelines         index said  $13.93   TCGplayer's lowest ask  $28.66
+ *
+ * All three rendered as 60–72% "deals" and none were purchasable. Re-querying
+ * the index returns the same ghosts, so freshness can't be fixed by polling
+ * harder — it needs a second source. Genuine listings sit at listing ≈ lowPrice.
+ *
+ * WHY THE BAR IS ~1.0 AND NOT SOMETHING LOOSER. `lowPrice` is TCGplayer's
+ * *minimum* ask, so a listing that genuinely exists CANNOT be below it — the
+ * platform would be reporting it as the new low. Measured ratios separate
+ * cleanly with no middle ground:
+ *
+ *   real      1.00  1.02  1.10  1.10  1.10   (tcgcsv corroborates the listing;
+ *                                             often the deal IS the low ask)
+ *   phantom   0.24  0.33  0.49  0.50  0.57   (never seen by TCGplayer's system)
+ *
+ * A genuine bargain still shows up: Fury Rune listed at $11.77 with lowPrice
+ * $11.77 against a $20 sale price is a real 41% deal — cheap relative to what
+ * the card SELLS for, while still being the cheapest real ask.
+ *
+ * TRADE-OFF, deliberate: `lowPrice` refreshes daily, so a genuinely new listing
+ * posted since the last sync and well under the previous low is rejected until
+ * the next refresh. That costs a real deal occasionally; the alternative was a
+ * board whose top entries were all unbuyable, which is worse than a shorter one.
+ * The 5% slack absorbs rounding and intraday drift.
+ */
+export const MIN_FRACTION_OF_LOW_PRICE = 0.95;
+
+/**
+ * Does this listing survive a cross-check against TCGplayer's own low price?
+ *
+ * `lowPrice` null means we have no second opinion — that happens on brand-new
+ * products before the first daily price sync. Unverifiable is treated as
+ * acceptable rather than rejected, so a new set isn't invisible for a day.
+ */
+export function isPlausibleListing(
+  listingPrice: number,
+  lowPrice: number | null | undefined,
+): boolean {
+  if (lowPrice == null || lowPrice <= 0) return true;
+  return listingPrice >= lowPrice * MIN_FRACTION_OF_LOW_PRICE;
+}
+
 /** Rarities always watched, regardless of price. */
 export const HIGH_RARITIES = new Set(["Epic", "Showcase"]);
 
