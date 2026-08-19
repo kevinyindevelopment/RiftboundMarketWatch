@@ -1,0 +1,63 @@
+# Apply this project's Neon compute/cost settings — manual, dry-run by default.
+#
+# Runs HERE rather than locally because the secrets already live here and Actions
+# secrets are write-only: DIRECT_DATABASE_URL cannot be read back out for a local
+# run, and NEON_API_KEY should not need to sit on anyone's disk. Same arrangement
+# as legend-field.yml.
+#
+# Leave `apply` unchecked first — the script prints the CURRENT settings and the
+# drift against target, and writes nothing. Re-run with it checked to apply.
+#
+# Re-run this after any compute is recreated: Neon's "Compute defaults" panel
+# only seeds NEWLY created computes, so a recreated one silently reverts to the
+# account defaults. See COST.md.
+name: Neon tune
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Actually write the settings (unchecked = dry run)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: neon-tune
+  cancel-in-progress: false
+
+jobs:
+  tune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall runs `prisma generate`.
+      - run: npm ci
+
+      - name: Check NEON_API_KEY is set
+        run: |
+          if [ -z "$NEON_API_KEY" ]; then
+            echo "::error::NEON_API_KEY secret is not set on this repo."
+            echo "Create one at Neon Console -> Account settings -> API keys, then:"
+            echo "  gh secret set NEON_API_KEY -R ${{ github.repository }}"
+            exit 1
+          fi
+
+      - name: Neon tune
+        run: |
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            npm run neon:tune -- --apply
+          else
+            npm run neon:tune
+          fi
