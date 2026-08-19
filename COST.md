@@ -61,17 +61,43 @@ matters far more than row counts.
    (tcgcsv refreshes ~20:00 UTC). There is no reason for two visitors in the same
    hour to cause two sets of queries. Cache aggressively — the data is stale by
    design.
-2. **Two scheduled write jobs, and their intervals are deliberate.**
+2. **Scheduled write jobs: CO-SCHEDULE them, never stagger them.**
+   Neon bills awake-time and suspends after 5 min idle, so **every separate wake
+   costs its work plus a 5-minute idle tail.** Two jobs firing 30 min apart pay
+   that tail twice; the same two jobs back-to-back pay it once. Contention is
+   *not* the thing to avoid — measured average is 0.26 CU against a 2 CU ceiling,
+   so there is ample headroom to run them together.
+
+   This was originally gotten backwards: `listings.yml` (:05) and `sales.yml`
+   (:35) were deliberately spread apart "so the jobs never contend on the same
+   Neon compute", which doubled the idle tails. Merged into `poll.yml` on
+   2026-08-19. Measured work is sales 111s + listings 32s, so:
+
+   | Arrangement | Awake/hour | Awake/day |
+   | --- | --- | --- |
+   | staggered (:05 + :35) | (111+300) + (32+300) = 743s | **4.96 h** |
+   | merged (`poll.yml`, :35) | (111+32) + 300 = 443s | **2.95 h** |
+
+   That is **2 h/day, ~40% of scheduled compute**, saved by scheduling alone —
+   and the saving is independent of how fast either script ever gets.
+   - `poll.yml` (hourly, :35) — sales then listings, one wake. Hourly is
+     **required**, not a preference: only the 5 most recent sales are exposed, so
+     a longer gap permanently loses sales for any card that trades more than 5
+     times in it. Sales runs **first** because it is the irreplaceable half;
+     listings is `if: always()` so a sales failure can't silently suppress it.
    - `update.yml` (daily, 21:15 UTC) — tcgcsv products + prices. Do **not**
      shorten it: upstream is a once-daily snapshot, so a more frequent job would
-     rewrite identical numbers and wake compute for nothing.
-   - `sales.yml` (hourly, :35) — TCGplayer sales. Hourly is **required**, not a
-     preference: only the 5 most recent sales are exposed, so a longer gap
-     permanently loses sales for any card that trades more than 5 times in it.
-     Measured cost: ~2 min/run wall clock (61s of it polling 1,534 products),
-     ≈ 1,440 GitHub Actions minutes/month — inside the 2,000-minute free tier for
-     private repos, but with little headroom. Adding a *third* hourly job, or
-     slowing this one down, would push it into paid overage.
+     rewrite identical numbers and wake compute for nothing. Left on its own wake
+     deliberately: folding it into the :35 poll would save ~5 min/day (~$0.10/mo)
+     and introduce a race, where `ingest` rewrites prices while listings is
+     deriving its watch list from them. Not worth it — see rule 8.
+   - **GitHub Actions minutes are no longer a constraint here.** The old note
+     said ~1,440 min/month was "inside the 2,000-minute free tier with little
+     headroom". That tier is **shared account-wide across all private repos**,
+     and it *was* exhausted on 2026-08-19 — every scheduled job across every repo
+     failed in 2-4s with no steps and `runner_id: 0`. This repo was made
+     **public** the same day, which makes standard-runner minutes unlimited and
+     free. Do not re-privatise it without re-doing that arithmetic.
 3. **Batch writes; never loop single queries over the network.** The ingest sends
    ~16 concurrent upserts and bulk `createMany` for prices. A naive per-row
    sequential loop would hold compute open far longer for the same work.
@@ -88,6 +114,14 @@ matters far more than row counts.
    any experiment branch when done.
 7. **Verify with `npm run db:verify`, not by browsing in Studio.** `prisma studio`
    holds a connection open and keeps compute warm.
+8. **Size the fix to the meter before taking on complexity.** Compute is the
+   meter; a change that saves minutes of awake-time is worth real effort, and a
+   change that saves seconds is not worth a new failure mode. Concretely: merging
+   the two hourly polls saved 2 h/day and was worth restructuring the workflows
+   (rule 2). Folding the daily `update.yml` into that same wake saves ~5 min/day
+   — about **$0.10/month** — and would let a price rewrite race a watch-list read,
+   so it was deliberately *not* done. Storage optimisations are almost always on
+   the wrong side of this line: the whole database is ~3c/month.
 
 ## Compute settings — managed by `npm run neon:tune`
 

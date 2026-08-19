@@ -1,0 +1,99 @@
+# Hourly TCGplayer poll — sales, then listings, in ONE run.
+#
+# ── Why these are one job and not two ───────────────────────────────────────
+# They used to be separate workflows deliberately staggered 30 min apart
+# (listings :05, sales :35) "so the three jobs never contend on the same Neon
+# compute". That reasoning was backwards for how Neon actually bills.
+#
+# Neon scales to zero after 5 min idle, and bills AWAKE-TIME. So every separate
+# wake costs its own work PLUS a 5-minute idle countdown, and two jobs sharing
+# one compute window is the CHEAP arrangement, not the expensive one. Measured
+# work per run: sales 111s, listings 32s.
+#
+#   staggered:  (111s + 300s) + (32s + 300s) = 743s awake/hour = 4.96 h/day
+#   merged:     (111s +  32s) + 300s         = 443s awake/hour = 2.95 h/day
+#
+# Co-scheduling saves exactly one 5-minute idle tail per hour — 2 h/day of Neon
+# compute, ~40% of this project's scheduled awake-time — regardless of how fast
+# either script gets. Contention was never a real risk: measured average is
+# 0.26 CU against a 2 CU ceiling (COST.md).
+#
+# ── Why sales runs first ────────────────────────────────────────────────────
+# Upstream exposes only the 5 most recent sales per product and ignores paging,
+# so a missed sales run loses data PERMANENTLY. Listings are an ephemeral
+# snapshot we replace wholesale every hour — a missed one costs nothing. If the
+# runner dies mid-job, the irreplaceable half has already landed.
+#
+# The two remain independently fault-tolerant: listings is `if: always()`, so a
+# sales failure cannot silently suppress it (that isolation was the other stated
+# reason for keeping them apart, and it survives the merge). A failed step still
+# fails the job, so neither failure is hidden.
+#
+# They share no data: sales writes Sale/ProductPrice/Product, listings reads
+# Product and rewrites Listing. Sales-first means listings sees fresher prices.
+name: Poll TCGplayer
+
+on:
+  schedule:
+    # :35 — unchanged from the old sales cron, so the hourly sales cadence this
+    # site depends on carries over with no gap. Listings simply moved to join it.
+    - cron: "35 * * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Only poll the first N products (testing)"
+        required: false
+        type: string
+      only:
+        description: "Run just one half"
+        required: false
+        default: both
+        type: choice
+        options: [both, sales, listings]
+
+# Never overlap: two sweeps would double the load on an undocumented upstream
+# endpoint and contend on the same writes.
+concurrency:
+  group: poll-tcgplayer
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    # Covers both halves plus headroom. A wedged run is killed before the next
+    # hourly one queues behind it.
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall runs `prisma generate`. Once, not twice — the other half of
+      # merging these.
+      - run: npm ci
+
+      - name: Poll sales
+        if: ${{ inputs.only != 'listings' }}
+        run: |
+          if [ -n "${{ inputs.limit }}" ]; then
+            npm run ingest:sales -- --limit "${{ inputs.limit }}"
+          else
+            npm run ingest:sales
+          fi
+
+      # always(): a sales failure must not skip listings. The job still reports
+      # failure, because a failed step fails the job regardless of what follows.
+      - name: Poll listings
+        if: ${{ always() && inputs.only != 'sales' }}
+        run: |
+          if [ -n "${{ inputs.limit }}" ]; then
+            npm run ingest:listings -- --limit "${{ inputs.limit }}"
+          else
+            npm run ingest:listings
+          fi
